@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Business {
+  id                 String   @id @default(uuid())
+  nome_marca         String
+  nome_interno       String
+  segmento           String?
+  descricao          String?  @db.Text
+  site_url           String?
+  redes_sociais      Json?
+  idioma_principal   String?
+  publico_alvo       String?  @db.Text
+  objetivo_marketing String?  @db.Text
+  status             String   @default("ATIVO") // ATIVO / INATIVO
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  brand_profiles BrandProfile[]
+  campaigns      Campaign[]
+}
+
+model BrandProfile {
+  id                 String   @id @default(uuid())
+  business_id        String
+  business           Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  versao             Int      @default(1)
+  is_active          Boolean  @default(false)
+  tom_de_voz         String?  @db.Text
+  estilo_comunicacao String?  @db.Text
+  palavras_usadas    String[]
+  palavras_evitar    String[]
+  publico_alvo       String?  @db.Text
+  temas_prioritarios String[]
+  proposta_valor     String?  @db.Text
+  diferenciais       String[]
+  estilo_visual      String?  @db.Text
+  tipos_conteudo     String[]
+  exemplos_abordagem String[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+model Campaign {
+  id               String   @id @default(uuid())
+  business_id      String
+  business         Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  nome             String
+  objetivo         String
+  descricao        String?  @db.Text
+  publico_alvo     String?  @db.Text
+  mensagem_central String?  @db.Text
+  cta_principal    String?
+  canais           String[]
+  data_inicio      DateTime?
+  data_fim         DateTime?
+  tipo_midia       String   @default("ORGANICO") // ORGANICO, PAGA, HIBRIDO
+  status           String   @default("RASCUNHO")
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  contents Content[]
+}
+
+model Content {
+  id            String   @id @default(uuid())
+  campaign_id   String
+  campaign      Campaign @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  data          DateTime?
+  tipo_conteudo String?
+  tema          String?  @db.Text
+  objetivo_post String?  @db.Text
+  status        String   @default("PENDENTE") // pendente, em produção, revisão, aprovado, publicado
+  agente_atual  String?
+  texto_gerado  String?  @db.Text
+  resultados_agentes Json?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
