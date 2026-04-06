@@ -35,6 +35,7 @@ export default function ContentCalendar() {
   const [reviewItem, setReviewItem] = useState<Content | null>(null)
   const [activeTab, setActiveTab] = useState<"pesquisa"|"copy"|"design">("pesquisa")
   const [observation, setObservation] = useState("")
+  const [isProcessing, setIsProcessing] = useState(false)
   const [formData, setFormData] = useState({ data: "", tipo_conteudo: "Carrossel", tema: "", objetivo_post: "" })
 
   useEffect(() => {
@@ -63,7 +64,9 @@ export default function ContentCalendar() {
     
     // Atualização em tempo real (polling) para acompanhar os agentes trabalhando
     const interval = setInterval(() => {
-      if (!activeCampaignId) return;
+      // Pause polling while a mutation is in progress to prevent UI jumping/overwriting
+      if (!activeCampaignId || isProcessing) return;
+      
       fetch(`/api/contents?campaign_id=${activeCampaignId}`)
         .then(r => r.json())
         .then(data => {
@@ -73,11 +76,12 @@ export default function ContentCalendar() {
             const updated = (Array.isArray(data) ? data : []).find((c: Content) => c.id === prev.id);
             return updated || prev;
           });
-        });
+        })
+        .catch(err => console.error("Polling error:", err)); // Silently handle polling errors
     }, 2000);
     
     return () => clearInterval(interval);
-  }, [activeCampaignId])
+  }, [activeCampaignId, isProcessing])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -111,39 +115,63 @@ export default function ContentCalendar() {
     fetchContents();
   }
 
+  const agentToTab: Record<string, "pesquisa"|"copy"|"design"> = { 'Pesquisador': 'pesquisa', 'Copywriter': 'copy', 'Designer': 'design' };
+
   const handleAdvance = async () => {
     if (!reviewItem) return
-    // Map active tab to agent name for the backend
-    const tabToAgent: Record<string, string> = { pesquisa: 'Pesquisador', copy: 'Copywriter', design: 'Designer' };
-    const currentAgent = tabToAgent[activeTab] || reviewItem.agente_atual;
-    const res = await fetch(`/api/contents/${reviewItem.id}/advance`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        current_agent: currentAgent, 
-        observacao: observation 
+    setIsProcessing(true)
+    try {
+      // Map active tab to agent name for the backend
+      const tabToAgent: Record<string, string> = { pesquisa: 'Pesquisador', copy: 'Copywriter', design: 'Designer' };
+      const currentAgent = tabToAgent[activeTab] || reviewItem.agente_atual;
+      const res = await fetch(`/api/contents/${reviewItem.id}/advance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          current_agent: currentAgent, 
+          observacao: observation 
+        })
       })
-    })
-    const updated = await res.json()
-    setReviewItem(prev => prev ? { ...prev, ...updated } : null)
-    setObservation("")
-    fetchContents()
+      if (!res.ok) throw new Error("Falha ao avançar")
+      const updated = await res.json()
+      setReviewItem(prev => prev ? { ...prev, ...updated } : null)
+      setObservation("")
+      // Auto-switch tab to the next agent so user sees the new content
+      if (updated.agente_atual && agentToTab[updated.agente_atual]) {
+        setActiveTab(agentToTab[updated.agente_atual])
+      }
+      fetchContents()
+    } catch (err) {
+      console.error(err)
+      alert("Erro ao avançar o processo. Tente novamente.")
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const handleRetry = async () => {
     if (!reviewItem) return
-    // Map active tab to agent name so retry works from any state
-    const tabToAgent: Record<string, string> = { pesquisa: 'Pesquisador', copy: 'Copywriter', design: 'Designer' };
-    const targetAgent = tabToAgent[activeTab] || reviewItem.agente_atual;
-    const res = await fetch(`/api/contents/${reviewItem.id}/retry`, { 
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ observacao: observation, target_agent: targetAgent })
-    })
-    const updated = await res.json()
-    setReviewItem(prev => prev ? { ...prev, ...updated } : null)
-    setObservation("")
-    fetchContents()
+    setIsProcessing(true)
+    try {
+      // Map active tab to agent name so retry works from any state
+      const tabToAgent: Record<string, string> = { pesquisa: 'Pesquisador', copy: 'Copywriter', design: 'Designer' };
+      const targetAgent = tabToAgent[activeTab] || reviewItem.agente_atual;
+      const res = await fetch(`/api/contents/${reviewItem.id}/retry`, { 
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ observacao: observation, target_agent: targetAgent })
+      })
+      if (!res.ok) throw new Error("Falha ao refazer")
+      const updated = await res.json()
+      setReviewItem(prev => prev ? { ...prev, ...updated } : null)
+      setObservation("")
+      fetchContents()
+    } catch (err) {
+      console.error(err)
+      alert("Erro ao refazer a etapa. Tente novamente.")
+    } finally {
+      setIsProcessing(false)
+    }
   }
 
   const statusKeys = Object.keys(STATUS_CONFIG)
@@ -153,8 +181,7 @@ export default function ContentCalendar() {
       
       {/* Review Dialog */}
       <Dialog open={!!reviewItem} onOpenChange={(o) => {
-        if(!o) { setReviewItem(null); setObservation(""); }
-        setActiveTab("pesquisa")
+        if(!o) { setReviewItem(null); setObservation(""); setActiveTab("pesquisa"); }
       }}>
         <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
@@ -281,9 +308,14 @@ export default function ContentCalendar() {
                     <Button 
                       size="sm" 
                       onClick={handleRetry}
+                      disabled={isProcessing}
                       className="bg-amber-500 hover:bg-amber-600 text-white gap-1"
                     >
-                      📩 Enviar Observação e Refazer Etapa
+                      {isProcessing ? (
+                        <><span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></span> Processando...</>
+                      ) : (
+                        <>📩 Enviar Observação e Refazer Etapa</>
+                      )}
                     </Button>
                   )}
                 </div>
@@ -293,11 +325,9 @@ export default function ContentCalendar() {
           <DialogFooter className="flex justify-end gap-2 flex-shrink-0">
             {reviewItem?.status === 'REVISAO' ? (
               <>
-                <Button variant="outline" onClick={() => {
-                  fetch(`/api/contents/${reviewItem.id}/generate`, { method: "POST" })
-                    .then(() => { setReviewItem(null); fetchContents(); })
-                }}>
-                  Rejeitar (Refazer)
+                <Button variant="outline" onClick={handleRetry} disabled={isProcessing}>
+                  {isProcessing ? <span className="h-4 w-4 rounded-full border-2 border-primary/20 border-t-primary animate-spin mr-1"></span> : "🔄 "}
+                  Rejeitar (Pedir Ajuste)
                 </Button>
                 <Button onClick={handleApproveContent} className="bg-green-600 hover:bg-green-700 text-white gap-2">
                   👍 Aprovar Conteúdo
@@ -305,14 +335,19 @@ export default function ContentCalendar() {
               </>
             ) : reviewItem?.status === 'EM_PRODUCAO' || reviewItem?.agente_atual ? (
               <>
-                <Button variant="outline" onClick={handleRetry}>
-                  Refazer Etapa 🔄
+                <Button variant="outline" onClick={handleRetry} disabled={isProcessing}>
+                  {isProcessing ? <span className="h-4 w-4 rounded-full border-2 border-primary/20 border-t-primary animate-spin mr-1"></span> : "🔄 "}
+                  Refazer Etapa
                 </Button>
-                <Button variant="outline" onClick={() => { setReviewItem(null); setObservation(""); }}>Fechar</Button>
+                <Button variant="outline" onClick={() => { setReviewItem(null); setObservation(""); }} disabled={isProcessing}>Fechar</Button>
                 
                 {reviewItem?.agente_atual !== 'Aguardando Aprovação' && (
-                  <Button onClick={handleAdvance} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
-                    Avançar Processo 🚀
+                  <Button onClick={handleAdvance} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+                    {isProcessing ? (
+                      <><span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></span> Avançando...</>
+                    ) : (
+                      <>Avançar Processo 🚀</>
+                    )}
                   </Button>
                 )}
               </>
@@ -436,7 +471,14 @@ export default function ContentCalendar() {
                           )}
                           {['EM_PRODUCAO', 'REVISAO', 'APROVADO', 'PUBLICADO'].includes(statusKey) && (
                             <button
-                              onClick={() => setReviewItem(item)}
+                              onClick={() => {
+                                setReviewItem(item)
+                                // Auto-navigate to the current agent's tab
+                                const tab = agentToTab[item.agente_atual || '']
+                                if (tab) setActiveTab(tab)
+                                else if (item.agente_atual === 'Aguardando Aprovação') setActiveTab('design')
+                                else setActiveTab('pesquisa')
+                              }}
                               className={`text-xs w-full text-white font-semibold px-2 py-1.5 rounded transition-colors flex items-center justify-center gap-1 mb-2 ${statusKey === 'REVISAO' ? 'bg-amber-500 hover:bg-amber-600' : statusKey === 'EM_PRODUCAO' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-700 hover:bg-slate-800'}`}
                             >
                               {statusKey === 'REVISAO' ? '👁️ Revisar Conteúdo' : statusKey === 'EM_PRODUCAO' ? '🔭 Acompanhar IA' : '👁️ Ver Conteúdo'}

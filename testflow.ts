@@ -1,29 +1,77 @@
-import dotenv from 'dotenv';
-dotenv.config();
-import { PrismaClient } from '@prisma/client';
+import puppeteer from 'puppeteer';
 
-const prisma = new PrismaClient();
+const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
-async function main() {
-  const bus = await prisma.business.create({
-    data: { nome_marca: "Teste", nome_interno: "T" }
-  });
-  const cmp = await prisma.campaign.create({
-    data: { business_id: bus.id, nome: "Campanha 1", objetivo: "Awareness" }
-  });
-  const cnt = await prisma.content.create({
-    data: { campaign_id: cmp.id, tema: "Post Teste", status: "PENDENTE" }
-  });
-  console.log("Created", cnt.id);
+(async () => {
+  console.log("Starting Puppeteer test for ContentCalendar...");
+  const browser = await puppeteer.launch({ headless: "new" });
+  const page = await browser.newPage();
   
-  // fetch contents
-  const all = await prisma.content.findMany();
-  console.log("Contents before:", all.length);
+  // Capture console logs
+  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
+  
+  // Capture network requests
+  page.on('request', request => {
+    if(request.url().includes('/api/contents')) {
+      console.log('NETWORK REQ:', request.method(), request.url(), request.postData() || '');
+    }
+  });
 
-  // simulate generate status update
-  await prisma.content.update({ where: { id: cnt.id }, data: { status: 'EM_PRODUCAO' } });
+  page.on('response', async response => {
+    if(response.url().includes('/api/contents') && response.request().method() === 'POST') {
+      console.log('NETWORK RES:', response.status(), await response.text().catch(()=>''));
+    }
+  });
 
-  const allAfter = await prisma.content.findMany();
-  console.log("Contents after:", allAfter.length);
-}
-main().finally(() => prisma.$disconnect());
+  try {
+    console.log("Navigating to app...");
+    await page.goto('http://localhost:5173/calendar', { waitUntil: 'networkidle0' });
+    
+    console.log("Waiting for content items to load...");
+    await delay(2000);
+    
+    // Look for a review button (either Acompanhar IA or Revisar Conteúdo)
+    const reviewButton = await page.$('button::-p-text(Acompanhar IA), button::-p-text(Revisar Conteúdo), button::-p-text(Ver Conteúdo)');
+    
+    if (reviewButton) {
+      console.log("Found review button, clicking...");
+      await reviewButton.click();
+      
+      console.log("Waiting for dialog to open...");
+      await delay(1000);
+      
+      console.log("Clicking on Design tab...");
+      const designTab = await page.$('button::-p-text(3. Design)');
+      if (designTab) await designTab.click();
+      
+      await delay(500);
+      
+      console.log("Typing observation...");
+      const textarea = await page.$('textarea');
+      if (textarea) {
+        await textarea.type('Teste automatizado de design');
+      } else {
+        console.log("TEXTAREA NOT FOUND!");
+      }
+      
+      console.log("Clicking Enviar Observação e Refazer...");
+      const retryButton = await page.$('button::-p-text(Enviar Observação)');
+      if (retryButton) {
+        await retryButton.click();
+        console.log("Clicked! Waiting 3 seconds to observe network/UI...");
+        await delay(3000);
+      } else {
+        console.log("RETRY BUTTON NOT FOUND!");
+      }
+      
+    } else {
+      console.log("NO REVIEW BUTTON FOUND. Testing advance endpoint manually.");
+    }
+    
+  } catch (err) {
+    console.error("Test error:", err);
+  } finally {
+    await browser.close();
+    console.log("Test finished.");
+  }
+})();

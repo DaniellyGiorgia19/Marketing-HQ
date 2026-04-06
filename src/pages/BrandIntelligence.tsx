@@ -261,6 +261,42 @@ export default function BrandIntelligence() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6 pt-6">
+              {/* Site & Social Links Section */}
+              <div className="space-y-4 p-4 rounded-lg border border-dashed border-amber-400/60 bg-amber-50/40 dark:bg-amber-900/10">
+                <div className="flex items-center gap-2 mb-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                  <Label className="text-sm font-semibold text-amber-700 dark:text-amber-400">Presença Online</Label>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">URL do Site</Label>
+                  <Input 
+                    placeholder="https://suaempresa.com.br" 
+                    value={formData.siteUrl}
+                    onChange={e => setFormData({...formData, siteUrl: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs text-muted-foreground">Redes Sociais</Label>
+                  {formData.socialLinks.map((link, index) => (
+                    <div key={index} className="flex gap-2">
+                      <Input 
+                        placeholder="https://instagram.com/suaempresa" 
+                        value={link}
+                        onChange={e => handleSocialLinkChange(index, e.target.value)}
+                      />
+                      {formData.socialLinks.length > 1 && (
+                        <Button type="button" variant="ghost" size="icon" onClick={() => removeSocialLink(index)} className="shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" size="sm" onClick={addSocialLink} className="text-xs mt-1">
+                     + Adicionar outro canal
+                  </Button>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Tom de Voz</Label>
