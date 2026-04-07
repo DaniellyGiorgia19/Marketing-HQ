@@ -2,12 +2,14 @@ import express from 'express';
 import cors from 'cors';
 import { Prisma, PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
 const app = express();
 const prisma = new PrismaClient();
 const port = process.env.PORT || 3001;
+const isVercel = process.env.VERCEL === '1';
 
 type SocialLinks = Record<string, string>;
 
@@ -482,6 +484,13 @@ app.post('/api/contents/:id/publish', async (req, res) => {
   }
 });
 
-app.listen(port, () => {
-  console.log(`🚀 Backend server is running on http://localhost:${port}`);
-});
+const currentFilePath = fileURLToPath(import.meta.url);
+const entryFilePath = process.argv[1];
+
+if (!isVercel && entryFilePath === currentFilePath) {
+  app.listen(port, () => {
+    console.log(`🚀 Backend server is running on http://localhost:${port}`);
+  });
+}
+
+export default app;
