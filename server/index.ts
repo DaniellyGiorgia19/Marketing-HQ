@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -8,6 +8,59 @@ dotenv.config();
 const app = express();
 const prisma = new PrismaClient();
 const port = process.env.PORT || 3001;
+
+type SocialLinks = Record<string, string>;
+
+type AgentResults = {
+  pesquisa?: string;
+  copy?: string;
+  design?: string;
+  design_images?: string[];
+  _retryCount?: number;
+};
+
+type BrandData = {
+  nomeMarca: string;
+  site: string;
+  redes: SocialLinks;
+  segmento: string;
+  estiloVisual: string;
+  tomDeVoz: string;
+};
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  return 'Erro desconhecido';
+}
+
+function sendApiError(
+  res: express.Response,
+  statusCode: number,
+  message: string,
+  error: unknown
+) {
+  const detail = getErrorMessage(error);
+  console.error(message, detail);
+  res.status(statusCode).json({ error: message, detail });
+}
+
+function toAgentResults(value: Prisma.JsonValue | null | undefined): AgentResults {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return value as unknown as AgentResults;
+}
+
+function toSocialLinks(value: Prisma.JsonValue | null | undefined): SocialLinks {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => typeof entryValue === 'string')
+  ) as SocialLinks;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -30,7 +83,7 @@ app.get('/api/businesses', async (req, res) => {
     });
     res.json(businesses);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar negócios' });
+    sendApiError(res, 500, 'Erro ao buscar negócios', error);
   }
 });
 
@@ -52,7 +105,7 @@ app.post('/api/businesses', async (req, res) => {
     });
     res.json(business);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao criar negócio' });
+    sendApiError(res, 500, 'Erro ao criar negócio', error);
   }
 });
 
@@ -69,7 +122,7 @@ app.put('/api/businesses/:id', async (req, res) => {
     });
     res.json(business);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao atualizar negócio' });
+    sendApiError(res, 500, 'Erro ao atualizar negócio', error);
   }
 });
 
@@ -80,7 +133,7 @@ app.delete('/api/businesses/:id', async (req, res) => {
     });
     res.json({ success: true });
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao excluir negócio' });
+    sendApiError(res, 500, 'Erro ao excluir negócio', error);
   }
 });
 
@@ -113,7 +166,7 @@ app.post('/api/brand-profiles', async (req, res) => {
 
     // Salva site_url e redes_sociais no cadastro do Negócio
     if (data.site_url !== undefined || data.redes_sociais !== undefined) {
-      const businessUpdate: any = {};
+      const businessUpdate: Prisma.BusinessUpdateInput = {};
       if (data.site_url !== undefined) businessUpdate.site_url = data.site_url;
       if (data.redes_sociais !== undefined) businessUpdate.redes_sociais = data.redes_sociais;
       await prisma.business.update({
@@ -124,7 +177,7 @@ app.post('/api/brand-profiles', async (req, res) => {
 
     res.json(profile);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao salvar Brand Profile' });
+    sendApiError(res, 500, 'Erro ao salvar Brand Profile', error);
   }
 });
 
@@ -140,7 +193,7 @@ app.get('/api/campaigns', async (req, res) => {
     });
     res.json(campaigns);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar campanhas' });
+    sendApiError(res, 500, 'Erro ao buscar campanhas', error);
   }
 });
 
@@ -165,7 +218,7 @@ app.post('/api/campaigns', async (req, res) => {
     });
     res.json(campaign);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao criar campanha' });
+    sendApiError(res, 500, 'Erro ao criar campanha', error);
   }
 });
 
@@ -181,7 +234,7 @@ app.get('/api/contents', async (req, res) => {
     });
     res.json(contents);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao buscar conteúdos' });
+    sendApiError(res, 500, 'Erro ao buscar conteúdos', error);
   }
 });
 
@@ -200,7 +253,7 @@ app.post('/api/contents', async (req, res) => {
     });
     res.json(content);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao criar conteúdo' });
+    sendApiError(res, 500, 'Erro ao criar conteúdo', error);
   }
 });
 
@@ -212,7 +265,7 @@ app.patch('/api/contents/:id', async (req, res) => {
     });
     res.json(content);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao atualizar conteúdo' });
+    sendApiError(res, 500, 'Erro ao atualizar conteúdo', error);
   }
 });
 
@@ -246,7 +299,7 @@ function gerarCopy(tema: string, objetivo: string, versao: number, pesquisa?: st
   const blocos = [
     `✏️ **TEXTO DA ARTE:**\n"${tema}"\nSubtítulo: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\n\n---\n\n📝 **LEGENDA:**\n${fraseDado1.trim()}\n\nE isso muda completamente o jogo para quem atua nesse mercado.\n\nAlém disso: ${fraseDado2.trim().toLowerCase()}\n\nO cenário é claro — quem entende e aplica ${tema.toLowerCase()} agora está construindo uma vantagem competitiva real.\n\nA dúvida não é mais se vale a pena, mas o que você está esperando para começar.\n\n👉 Salve este post e envie para alguém que precisa ver esses dados.\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`,
     `✏️ **TEXTO DA ARTE:**\n"Você já parou para olhar os dados sobre ${tema.toLowerCase()}?"\nDestaque visual: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\n\n---\n\n📝 **LEGENDA:**\nOs dados sobre ${tema.toLowerCase()} estão surpreendendo o mercado:\n\n📊 ${fraseDado1.trim()}\n📈 ${fraseDado2.trim()}\n\nIsso não é achismo — são números reais de pesquisas recentes.\n\nE o mais importante: quem está atento a esses dados já está tomando decisões melhores, mais rápido.\n\nNão espere o mercado te dizer o que já está acontecendo. Antecipe-se.\n\nQual desses dados mais chamou sua atenção? Me conta nos comentários 👇\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`,
-    `✏️ **TEXTO DA ARTE:**\nPágina 1: "${tema}"\nPágina 2: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\nPágina 3: "Quem entende os dados, lidera o mercado\"\nPágina 4: "Seu próximo passo começa aqui →"\n\n---\n\n📝 **LEGENDA:**\nVamos colocar os dados na mesa sobre ${tema.toLowerCase()}? 📊\n\n${fraseDado1.trim()}\n\nMas não para por aí:\n${fraseDado2.trim()}\n\nEsses números mostram uma direção clara: ${tema.toLowerCase()} não é mais opcional para quem quer crescer de verdade.\n\nE a boa notícia? Você está lendo isso agora. Ainda dá tempo de agir.\n\nArrasta pro lado e veja como aplicar isso no seu negócio →\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`
+    `✏️ **TEXTO DA ARTE:**\nPágina 1: "${tema}"\nPágina 2: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\nPágina 3: "Quem entende os dados, lidera o mercado"\nPágina 4: "Seu próximo passo começa aqui →"\n\n---\n\n📝 **LEGENDA:**\nVamos colocar os dados na mesa sobre ${tema.toLowerCase()}? 📊\n\n${fraseDado1.trim()}\n\nMas não para por aí:\n${fraseDado2.trim()}\n\nEsses números mostram uma direção clara: ${tema.toLowerCase()} não é mais opcional para quem quer crescer de verdade.\n\nE a boa notícia? Você está lendo isso agora. Ainda dá tempo de agir.\n\nArrasta pro lado e veja como aplicar isso no seu negócio →\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`
   ];
   return blocos[versao % blocos.length];
 }
@@ -262,16 +315,16 @@ async function fetchBrandData(contentId: string) {
   return {
     nomeMarca: biz?.nome_marca || 'Marca',
     site: biz?.site_url || '',
-    redes: biz?.redes_sociais as any || {},
+    redes: toSocialLinks(biz?.redes_sociais),
     segmento: biz?.segmento || '',
     estiloVisual: brand?.estilo_visual || '',
     tomDeVoz: brand?.tom_de_voz || '',
   };
 }
 
-function gerarDesign(tema: string, tipo: string, versao: number, brand: { nomeMarca: string; site: string; redes: any; segmento: string; estiloVisual: string }, obs?: string, copyText?: string) {
+function gerarDesign(tema: string, tipo: string, versao: number, brand: BrandData, obs?: string, copyText?: string) {
   const redesList = Object.entries(brand.redes || {})
-    .filter(([_, v]) => v)
+    .filter(([, v]) => Boolean(v))
     .map(([k, v]) => `${k}: ${v}`)
     .join(' | ') || 'Sem redes cadastradas';
 
@@ -287,7 +340,7 @@ function gerarDesign(tema: string, tipo: string, versao: number, brand: { nomeMa
     if (capaMatch) tituloSugerido = capaMatch[1].trim().replace(/^"(.*)"$/, '$1');
 
     const subMatch = sourceText.match(/(?:Slide 2|Página 2|P2)[:\s-]+(.*?)(?=\n|Slide 3|Página 3|P3|$)/i);
-    if (subMatch) subtituloSugerido = subMatch[1].trim().replace(/^"(.*)"$/, '$1').substring(0, 100) + "...";
+    if (subMatch) subtituloSugerido = `${subMatch[1].trim().replace(/^"(.*)"$/, '$1').substring(0, 100)}...`;
   }
 
   const identidadeBloco = `📋 **IDENTIDADE VISUAL DA MARCA:**\n• Marca: ${brand.nomeMarca}\n• Segmento: ${brand.segmento || 'Não definido'}\n• Estilo visual: ${brand.estiloVisual || 'Seguir padrão do site e redes sociais da marca'}\n• Site: ${brand.site || 'Não informado'}\n• Redes: ${redesList}`;
@@ -329,7 +382,7 @@ app.post('/api/contents/:id/generate', async (req, res) => {
     });
     res.json({ message: 'Squad iniciado', content });
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao iniciar' });
+    sendApiError(res, 500, 'Erro ao iniciar', error);
   }
 });
 
@@ -339,7 +392,7 @@ app.post('/api/contents/:id/advance', async (req, res) => {
     const { current_agent, observacao } = req.body;
     const current = await prisma.content.findUnique({ where: { id: contentId } });
     if (!current) return res.status(404).json({ error: 'Conteúdo não encontrado' });
-    const antigos = (current.resultados_agentes as any) || {};
+    const antigos = toAgentResults(current.resultados_agentes);
 
     if (current_agent === 'Pesquisador') {
       const mockCopy = gerarCopy(current.tema || 'Tema', current.objetivo_post || '', 0, antigos.pesquisa, observacao);
@@ -369,7 +422,7 @@ app.post('/api/contents/:id/advance', async (req, res) => {
     }
     res.status(400).json({ error: 'Agente não reconhecido' });
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao avançar' });
+    sendApiError(res, 500, 'Erro ao avançar', error);
   }
 });
 
@@ -380,7 +433,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 1000));
     const current = await prisma.content.findUnique({ where: { id: contentId } });
     if (!current) return res.status(404).json({ error: 'Conteúdo não encontrado' });
-    const antigos = (current.resultados_agentes as any) || {};
+    const antigos = toAgentResults(current.resultados_agentes);
     const version = (antigos._retryCount || 0) + 1;
     const agent = target_agent || current.agente_atual;
 
@@ -413,7 +466,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
     }
     res.json(current);
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao refazer' });
+    sendApiError(res, 500, 'Erro ao refazer', error);
   }
 });
 
@@ -425,7 +478,7 @@ app.post('/api/contents/:id/publish', async (req, res) => {
     });
     res.json({ message: 'Publicado', content });
   } catch (error) {
-    res.status(500).json({ error: 'Erro ao publicar' });
+    sendApiError(res, 500, 'Erro ao publicar', error);
   }
 });
 

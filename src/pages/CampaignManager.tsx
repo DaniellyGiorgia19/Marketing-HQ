@@ -31,6 +31,22 @@ export default function CampaignManager() {
     data_inicio: "", data_fim: "", tipo_midia: "ORGANICO"
   })
 
+  const fetchCampaigns = async (businessId: string) => {
+    if (!businessId) {
+      setCampaigns([])
+      return
+    }
+
+    setLoading(true)
+    try {
+      const response = await fetch(`/api/campaigns?business_id=${businessId}`)
+      const data = await response.json()
+      setCampaigns(Array.isArray(data) ? data : [])
+    } finally {
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
     fetch("/api/businesses").then(r => r.json()).then(data => {
       const list = Array.isArray(data) ? data : []
@@ -45,11 +61,7 @@ export default function CampaignManager() {
 
   useEffect(() => {
     if (!activeBusinessId) return
-    setLoading(true)
-    fetch(`/api/campaigns?business_id=${activeBusinessId}`)
-      .then(r => r.json())
-      .then(data => setCampaigns(Array.isArray(data) ? data : []))
-      .finally(() => setLoading(false))
+    void fetchCampaigns(activeBusinessId)
   }, [activeBusinessId])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -61,7 +73,7 @@ export default function CampaignManager() {
     })
     setIsOpen(false)
     setFormData({ nome: "", objetivo: "Gerar Leads", descricao: "", publico_alvo: "", mensagem_central: "", cta_principal: "", data_inicio: "", data_fim: "", tipo_midia: "ORGANICO" })
-    fetch(`/api/campaigns?business_id=${activeBusinessId}`).then(r => r.json()).then(setCampaigns)
+    await fetchCampaigns(activeBusinessId)
   }
 
   const statusColor: Record<string, string> = {

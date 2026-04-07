@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -50,38 +50,40 @@ export default function ContentCalendar() {
     })
   }, [initialCampaignId])
 
-  const fetchContents = () => {
-    if (!activeCampaignId) return
+  const refreshContents = useCallback(async (campaignId: string, reviewId?: string | null) => {
+    if (!campaignId) return
+
     setLoading(true)
-    fetch(`/api/contents?campaign_id=${activeCampaignId}`)
-      .then(r => r.json())
-      .then(data => setContents(Array.isArray(data) ? data : []))
-      .finally(() => setLoading(false))
-  }
+    try {
+      const response = await fetch(`/api/contents?campaign_id=${campaignId}`)
+      const data = await response.json()
+      const list = Array.isArray(data) ? data : []
+
+      setContents(list)
+
+      if (reviewId) {
+        const updated = list.find((content: Content) => content.id === reviewId)
+        setReviewItem(updated || null)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => { 
-    fetchContents();
+    void refreshContents(activeCampaignId, reviewItem?.id);
     
     // Atualização em tempo real (polling) para acompanhar os agentes trabalhando
     const interval = setInterval(() => {
       // Pause polling while a mutation is in progress to prevent UI jumping/overwriting
       if (!activeCampaignId || isProcessing) return;
-      
-      fetch(`/api/contents?campaign_id=${activeCampaignId}`)
-        .then(r => r.json())
-        .then(data => {
-          setContents(Array.isArray(data) ? data : []);
-          setReviewItem(prev => {
-            if (!prev) return null;
-            const updated = (Array.isArray(data) ? data : []).find((c: Content) => c.id === prev.id);
-            return updated || prev;
-          });
-        })
+
+      void refreshContents(activeCampaignId, reviewItem?.id)
         .catch(err => console.error("Polling error:", err)); // Silently handle polling errors
     }, 2000);
     
     return () => clearInterval(interval);
-  }, [activeCampaignId, isProcessing])
+  }, [activeCampaignId, isProcessing, refreshContents, reviewItem?.id])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -92,7 +94,7 @@ export default function ContentCalendar() {
     })
     setIsOpen(false)
     setFormData({ data: "", tipo_conteudo: "Carrossel", tema: "", objetivo_post: "" })
-    fetchContents()
+    await refreshContents(activeCampaignId)
   }
 
   const updateStatus = async (id: string, newStatus: string) => {
@@ -101,7 +103,7 @@ export default function ContentCalendar() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: newStatus })
     })
-    fetchContents()
+    await refreshContents(activeCampaignId, reviewItem?.id)
   }
 
   const handleApproveContent = async () => {
@@ -112,7 +114,7 @@ export default function ContentCalendar() {
       body: JSON.stringify({ status: "APROVADO", agente_atual: "Pronto para Publicar" })
     });
     setReviewItem(null);
-    fetchContents();
+    await refreshContents(activeCampaignId);
   }
 
   const agentToTab: Record<string, "pesquisa"|"copy"|"design"> = { 'Pesquisador': 'pesquisa', 'Copywriter': 'copy', 'Designer': 'design' };
@@ -140,7 +142,7 @@ export default function ContentCalendar() {
       if (updated.agente_atual && agentToTab[updated.agente_atual]) {
         setActiveTab(agentToTab[updated.agente_atual])
       }
-      fetchContents()
+      await refreshContents(activeCampaignId, reviewItem.id)
     } catch (err) {
       console.error(err)
       alert("Erro ao avançar o processo. Tente novamente.")
@@ -165,7 +167,7 @@ export default function ContentCalendar() {
       const updated = await res.json()
       setReviewItem(prev => prev ? { ...prev, ...updated } : null)
       setObservation("")
-      fetchContents()
+      await refreshContents(activeCampaignId, reviewItem.id)
     } catch (err) {
       console.error(err)
       alert("Erro ao refazer a etapa. Tente novamente.")
@@ -462,7 +464,7 @@ export default function ContentCalendar() {
                             <button
                               onClick={() => {
                                 fetch(`/api/contents/${item.id}/generate`, { method: "POST" })
-                                  .then(() => fetchContents())
+                                  .then(() => refreshContents(activeCampaignId))
                               }}
                               className="text-xs w-full bg-primary text-primary-foreground font-semibold px-2 py-1.5 rounded hover:bg-primary/90 transition-colors flex items-center justify-center gap-1 mb-2"
                             >
@@ -488,7 +490,7 @@ export default function ContentCalendar() {
                             <button
                               onClick={() => {
                                 fetch(`/api/contents/${item.id}/publish`, { method: "POST" })
-                                  .then(() => fetchContents())
+                                  .then(() => refreshContents(activeCampaignId))
                               }}
                               className="text-xs w-full bg-green-600 text-white font-semibold px-2 py-1.5 rounded hover:bg-green-700 transition-colors flex items-center justify-center gap-1 mb-2"
                             >

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Link } from "react-router-dom"
 import { Pencil, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -12,12 +12,14 @@ interface Business {
   nome_marca: string;
   nome_interno: string;
   segmento: string;
-  brand_profiles?: any[];
+  brand_profiles?: { id: string }[];
 }
 
 export default function BusinessDashboard() {
   const [businesses, setBusinesses] = useState<Business[]>([])
   const [loading, setLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(false)
   const [editItem, setEditItem] = useState<Business | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
@@ -27,37 +29,69 @@ export default function BusinessDashboard() {
     segmento: ""
   })
 
-  const fetchBusinesses = async () => {
+  const getApiErrorMessage = async (res: Response, fallback: string) => {
     try {
-      const res = await fetch("/api/businesses")
       const data = await res.json()
-      setBusinesses(Array.isArray(data) ? data : [])
-    } catch(err) {
-      console.error(err)
-    } finally {
-      setLoading(false)
+      if (typeof data?.detail === "string" && data.detail.trim()) return data.detail
+      if (typeof data?.error === "string" && data.error.trim()) return data.error
+      return fallback
+    } catch {
+      return fallback
     }
   }
 
-  useEffect(() => {
-    fetchBusinesses()
+  const fetchBusinesses = useCallback(async () => {
+    try {
+      const res = await fetch("/api/businesses")
+      if (!res.ok) {
+        const message = await getApiErrorMessage(res, "Não foi possível carregar os negócios.")
+        setFeedbackMessage(message)
+        setBusinesses([])
+        return
+      }
+      const data = await res.json()
+      setBusinesses(Array.isArray(data) ? data : [])
+      setFeedbackMessage(null)
+    } catch(err) {
+      console.error(err)
+      setFeedbackMessage("Não foi possível conectar com a API. Verifique se o backend está rodando.")
+    } finally {
+      setLoading(false)
+    }
   }, [])
+
+  useEffect(() => {
+    void fetchBusinesses()
+  }, [fetchBusinesses])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSubmitting(true)
+    setFeedbackMessage(null)
     try {
       const res = await fetch("/api/businesses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)
       })
-      if (res.ok) {
-        setIsOpen(false)
-        setFormData({ nome_marca: "", nome_interno: "", segmento: "" })
-        fetchBusinesses()
+      if (!res.ok) {
+        const message = await getApiErrorMessage(res, "Não foi possível salvar o negócio.")
+        setFeedbackMessage(message)
+        alert(message)
+        return
       }
+
+      setIsOpen(false)
+      setFormData({ nome_marca: "", nome_interno: "", segmento: "" })
+      setFeedbackMessage("Negócio salvo com sucesso.")
+      await fetchBusinesses()
     } catch(err) {
       console.error(err)
+      const message = "Não foi possível conectar com a API ao salvar o negócio."
+      setFeedbackMessage(message)
+      alert(message)
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -114,6 +148,11 @@ export default function BusinessDashboard() {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={handleSubmit} className="space-y-4 py-4">
+              {feedbackMessage && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  {feedbackMessage}
+                </div>
+              )}
               <div className="space-y-2">
                 <Label htmlFor="nome_marca">Nome da Marca</Label>
                 <Input 
@@ -145,7 +184,9 @@ export default function BusinessDashboard() {
                 />
               </div>
               <DialogFooter>
-                <Button type="submit">Salvar Negócio</Button>
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? "Salvando..." : "Salvar Negócio"}
+                </Button>
               </DialogFooter>
             </form>
           </DialogContent>
@@ -220,6 +261,10 @@ export default function BusinessDashboard() {
       {loading ? (
         <div className="flex h-32 items-center justify-center">
           <p className="text-muted-foreground">Carregando...</p>
+        </div>
+      ) : feedbackMessage && businesses.length === 0 ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {feedbackMessage}
         </div>
       ) : businesses.length === 0 ? (
         <div className="border rounded-xl border-dashed p-12 text-center bg-card text-card-foreground flex flex-col items-center justify-center gap-4">

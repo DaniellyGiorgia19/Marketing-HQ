@@ -5,12 +5,25 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 
+interface BrandProfile {
+  tom_de_voz: string;
+  estilo_comunicacao?: string;
+  palavras_usadas: string[];
+  palavras_evitar: string[];
+  publico_alvo: string;
+  proposta_valor: string;
+  diferenciais?: string[];
+  estilo_visual?: string;
+  tipos_conteudo?: string[];
+  exemplos_abordagem?: string[];
+}
+
 interface Business {
   id: string;
   nome_marca: string;
   site_url?: string;
   redes_sociais?: Record<string, string>;
-  brand_profiles?: any[];
+  brand_profiles?: BrandProfile[];
 }
 
 export default function BrandIntelligence() {
@@ -21,7 +34,7 @@ export default function BrandIntelligence() {
   const [activeBusinessId, setActiveBusinessId] = useState<string>("")
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<"input" | "generating" | "approval">("input")
-  const [brandProfile, setBrandProfile] = useState<any>(null)
+  const [brandProfile, setBrandProfile] = useState<BrandProfile | null>(null)
   const [isEditingSaved, setIsEditingSaved] = useState(false)
 
   const selectBusinessAndCheckProfile = (id: string, allB: Business[]) => {
