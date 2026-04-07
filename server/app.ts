@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-const prisma = new PrismaClient();
+let prisma: PrismaClient | null = null;
 
 type SocialLinks = Record<string, string>;
 
@@ -26,6 +26,14 @@ type BrandData = {
   estiloVisual: string;
   tomDeVoz: string;
 };
+
+function getPrisma() {
+  if (!prisma) {
+    prisma = new PrismaClient();
+  }
+
+  return prisma;
+}
 
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) return error.message;
@@ -70,7 +78,7 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/businesses', async (req, res) => {
   try {
-    const businesses = await prisma.business.findMany({
+    const businesses = await getPrisma().business.findMany({
       include: {
         brand_profiles: {
           where: { is_active: true },
@@ -87,7 +95,7 @@ app.get('/api/businesses', async (req, res) => {
 app.post('/api/businesses', async (req, res) => {
   try {
     const data = req.body;
-    const business = await prisma.business.create({
+    const business = await getPrisma().business.create({
       data: {
         nome_marca: data.nome_marca,
         nome_interno: data.nome_interno,
@@ -109,7 +117,7 @@ app.post('/api/businesses', async (req, res) => {
 app.put('/api/businesses/:id', async (req, res) => {
   try {
     const data = req.body;
-    const business = await prisma.business.update({
+    const business = await getPrisma().business.update({
       where: { id: req.params.id },
       data: {
         nome_marca: data.nome_marca,
@@ -125,7 +133,7 @@ app.put('/api/businesses/:id', async (req, res) => {
 
 app.delete('/api/businesses/:id', async (req, res) => {
   try {
-    await prisma.business.delete({
+    await getPrisma().business.delete({
       where: { id: req.params.id }
     });
     res.json({ success: true });
@@ -137,12 +145,12 @@ app.delete('/api/businesses/:id', async (req, res) => {
 app.post('/api/brand-profiles', async (req, res) => {
   try {
     const data = req.body;
-    await prisma.brandProfile.updateMany({
+    await getPrisma().brandProfile.updateMany({
       where: { business_id: data.business_id },
       data: { is_active: false }
     });
 
-    const profile = await prisma.brandProfile.create({
+    const profile = await getPrisma().brandProfile.create({
       data: {
         business_id: data.business_id,
         is_active: true,
@@ -163,7 +171,7 @@ app.post('/api/brand-profiles', async (req, res) => {
       const businessUpdate: Prisma.BusinessUpdateInput = {};
       if (data.site_url !== undefined) businessUpdate.site_url = data.site_url;
       if (data.redes_sociais !== undefined) businessUpdate.redes_sociais = data.redes_sociais;
-      await prisma.business.update({
+      await getPrisma().business.update({
         where: { id: data.business_id },
         data: businessUpdate
       });
@@ -179,7 +187,7 @@ app.get('/api/campaigns', async (req, res) => {
   try {
     const businessId = req.query.business_id as string;
     const where = businessId ? { business_id: businessId } : {};
-    const campaigns = await prisma.campaign.findMany({
+    const campaigns = await getPrisma().campaign.findMany({
       where,
       include: { _count: { select: { contents: true } } },
       orderBy: { created_at: 'desc' }
@@ -193,7 +201,7 @@ app.get('/api/campaigns', async (req, res) => {
 app.post('/api/campaigns', async (req, res) => {
   try {
     const data = req.body;
-    const campaign = await prisma.campaign.create({
+    const campaign = await getPrisma().campaign.create({
       data: {
         business_id: data.business_id,
         nome: data.nome,
@@ -219,7 +227,7 @@ app.get('/api/contents', async (req, res) => {
   try {
     const campaignId = req.query.campaign_id as string;
     const where = campaignId ? { campaign_id: campaignId } : {};
-    const contents = await prisma.content.findMany({
+    const contents = await getPrisma().content.findMany({
       where,
       include: { campaign: { select: { nome: true } } },
       orderBy: { data: 'asc' }
@@ -233,7 +241,7 @@ app.get('/api/contents', async (req, res) => {
 app.post('/api/contents', async (req, res) => {
   try {
     const data = req.body;
-    const content = await prisma.content.create({
+    const content = await getPrisma().content.create({
       data: {
         campaign_id: data.campaign_id,
         data: data.data ? new Date(data.data) : null,
@@ -251,7 +259,7 @@ app.post('/api/contents', async (req, res) => {
 
 app.patch('/api/contents/:id', async (req, res) => {
   try {
-    const content = await prisma.content.update({
+    const content = await getPrisma().content.update({
       where: { id: req.params.id },
       data: req.body
     });
@@ -289,7 +297,7 @@ function gerarCopy(tema: string, objetivo: string, versao: number, pesquisa?: st
 }
 
 async function fetchBrandData(contentId: string) {
-  const content = await prisma.content.findUnique({
+  const content = await getPrisma().content.findUnique({
     where: { id: contentId },
     include: { campaign: { include: { business: { include: { brand_profiles: { where: { is_active: true } } } } } } }
   });
@@ -353,10 +361,10 @@ function gerarDesign(tema: string, tipo: string, versao: number, brand: BrandDat
 
 app.post('/api/contents/:id/generate', async (req, res) => {
   try {
-    const existing = await prisma.content.findUnique({ where: { id: req.params.id } });
+    const existing = await getPrisma().content.findUnique({ where: { id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Conteúdo não encontrado' });
     const pesquisa = gerarPesquisa(existing.tema || 'Tema', existing.objetivo_post || '', 0);
-    const content = await prisma.content.update({
+    const content = await getPrisma().content.update({
       where: { id: req.params.id },
       data: { status: 'EM_PRODUCAO', agente_atual: 'Pesquisador', resultados_agentes: { pesquisa, _retryCount: 0 } }
     });
@@ -370,13 +378,13 @@ app.post('/api/contents/:id/advance', async (req, res) => {
   try {
     const contentId = req.params.id;
     const { current_agent, observacao } = req.body;
-    const current = await prisma.content.findUnique({ where: { id: contentId } });
+    const current = await getPrisma().content.findUnique({ where: { id: contentId } });
     if (!current) return res.status(404).json({ error: 'Conteúdo não encontrado' });
     const antigos = toAgentResults(current.resultados_agentes);
 
     if (current_agent === 'Pesquisador') {
       const mockCopy = gerarCopy(current.tema || 'Tema', current.objetivo_post || '', 0, antigos.pesquisa, observacao);
-      const content = await prisma.content.update({
+      const content = await getPrisma().content.update({
         where: { id: contentId },
         data: { agente_atual: 'Copywriter', texto_gerado: mockCopy, resultados_agentes: { ...antigos, copy: mockCopy, _retryCount: 0 } }
       });
@@ -386,7 +394,7 @@ app.post('/api/contents/:id/advance', async (req, res) => {
     if (current_agent === 'Copywriter') {
       const brandData = await fetchBrandData(contentId);
       const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', 0, brandData, observacao, current.texto_gerado || undefined);
-      const content = await prisma.content.update({
+      const content = await getPrisma().content.update({
         where: { id: contentId },
         data: { agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_images: designResult.images, _retryCount: 0 } }
       });
@@ -394,7 +402,7 @@ app.post('/api/contents/:id/advance', async (req, res) => {
     }
 
     if (current_agent === 'Designer') {
-      const content = await prisma.content.update({
+      const content = await getPrisma().content.update({
         where: { id: contentId },
         data: { status: 'REVISAO', agente_atual: 'Aguardando Aprovação' }
       });
@@ -412,7 +420,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
     const contentId = req.params.id;
     const { observacao, target_agent } = req.body;
     await new Promise(resolve => setTimeout(resolve, 1000));
-    const current = await prisma.content.findUnique({ where: { id: contentId } });
+    const current = await getPrisma().content.findUnique({ where: { id: contentId } });
     if (!current) return res.status(404).json({ error: 'Conteúdo não encontrado' });
     const antigos = toAgentResults(current.resultados_agentes);
     const version = (antigos._retryCount || 0) + 1;
@@ -420,7 +428,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
 
     if (agent === 'Pesquisador') {
       const pesquisa = gerarPesquisa(current.tema || 'Tema', current.objetivo_post || '', version);
-      const updated = await prisma.content.update({
+      const updated = await getPrisma().content.update({
         where: { id: contentId },
         data: { status: 'EM_PRODUCAO', agente_atual: 'Pesquisador', resultados_agentes: { ...antigos, pesquisa, _retryCount: version } }
       });
@@ -429,7 +437,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
 
     if (agent === 'Copywriter') {
       const copy = gerarCopy(current.tema || 'Tema', current.objetivo_post || '', version, antigos.pesquisa, observacao);
-      const updated = await prisma.content.update({
+      const updated = await getPrisma().content.update({
         where: { id: contentId },
         data: { status: 'EM_PRODUCAO', agente_atual: 'Copywriter', texto_gerado: copy, resultados_agentes: { ...antigos, copy, _retryCount: version } }
       });
@@ -439,7 +447,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
     if (agent === 'Designer') {
       const brandData = await fetchBrandData(contentId);
       const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', version, brandData, observacao, antigos.copy || undefined);
-      const updated = await prisma.content.update({
+      const updated = await getPrisma().content.update({
         where: { id: contentId },
         data: { status: 'EM_PRODUCAO', agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_images: designResult.images, _retryCount: version } }
       });
@@ -454,7 +462,7 @@ app.post('/api/contents/:id/retry', async (req, res) => {
 
 app.post('/api/contents/:id/publish', async (req, res) => {
   try {
-    const content = await prisma.content.update({
+    const content = await getPrisma().content.update({
       where: { id: req.params.id },
       data: { status: 'PUBLICADO', agente_atual: 'Publicador' }
     });
