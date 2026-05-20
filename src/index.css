@@ -1,9 +1,13 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Sora:wght@400;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
+    --font-display: "Sora", "Avenir Next", "Segoe UI", sans-serif;
+    --font-body: "Inter", "Helvetica Neue", "Arial Nova", sans-serif;
     --background: 0 0% 100%;
     --foreground: 222.2 84% 4.9%;
 
@@ -70,7 +74,61 @@
   * {
     @apply border-border;
   }
+
+  html {
+    font-family: var(--font-body);
+    font-feature-settings: "liga" 1, "calt" 1;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-body);
+    letter-spacing: -0.01em;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.035em;
+  }
+
+  h1,
+  h2,
+  h3 {
+    line-height: 0.95;
+  }
+
+  p,
+  li,
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  .type-kicker {
+    @apply text-[0.72rem] font-semibold uppercase tracking-[0.28em] text-muted-foreground;
+  }
+
+  .type-display {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.045em;
+    line-height: 0.92;
+  }
+
+  .type-reading {
+    font-family: var(--font-body);
+    line-height: 1.65;
+    letter-spacing: -0.012em;
   }
 }

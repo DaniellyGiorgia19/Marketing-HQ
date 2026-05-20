@@ -2,6 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import { Prisma, PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
+import {
+  buildHtmlTemplates,
+  buildReferenceTemplateFromSiteImage,
+  type DesignAlignment,
+  type DesignSlide,
+  type DesignerOutput,
+  type LayoutVariant,
+  type StylePreset,
+} from '../shared/designTemplates';
 
 dotenv.config();
 
@@ -13,9 +22,30 @@ type SocialLinks = Record<string, string>;
 type AgentResults = {
   pesquisa?: string;
   copy?: string;
+  copy_payload?: CopyOutput;
   design?: string;
+  design_payload?: DesignerOutput;
   design_images?: string[];
   _retryCount?: number;
+};
+
+type CopySlideRole = 'hook' | 'insight' | 'proof' | 'cta';
+
+type CopySlide = {
+  index: number;
+  role: CopySlideRole;
+  text: string;
+};
+
+type CopyOutput = {
+  tema: string;
+  post_type: 'carrossel' | 'post_unico' | 'capa_reels' | 'story';
+  hook: string;
+  slides: CopySlide[];
+  caption: string[];
+  hashtags: string[];
+  strategic_objective?: string;
+  user_direction?: string;
 };
 
 type BrandData = {
@@ -25,6 +55,22 @@ type BrandData = {
   segmento: string;
   estiloVisual: string;
   tomDeVoz: string;
+  visualDirection: {
+    palette: string;
+    typography: string;
+    style: string;
+    gridLayout: string;
+    compositionModel: string;
+    textAlignment: string;
+    density: string;
+    logoPlacement: string;
+    frameStyle: string;
+    compositionRules: string;
+    recurringElements: string;
+    socialReferenceNotes: string;
+    avoidances: string;
+    templates: string[];
+  };
 };
 
 function getPrisma() {
@@ -40,6 +86,11 @@ function getErrorMessage(error: unknown) {
   return 'Erro desconhecido';
 }
 
+function isDatabaseConnectionError(error: unknown) {
+  const message = getErrorMessage(error);
+  return /can't reach database server|connect.*timed out|connection.*refused|p1001|database server/i.test(message);
+}
+
 function sendApiError(
   res: express.Response,
   statusCode: number,
@@ -48,7 +99,15 @@ function sendApiError(
 ) {
   const detail = getErrorMessage(error);
   console.error(message, detail);
-  res.status(statusCode).json({ error: message, detail });
+
+  if (isDatabaseConnectionError(error)) {
+    res.status(503).json({
+      error: 'Banco de dados indisponível. Verifique a conexão e tente novamente.',
+    });
+    return;
+  }
+
+  res.status(statusCode).json({ error: message });
 }
 
 function toAgentResults(value: Prisma.JsonValue | null | undefined): AgentResults {
@@ -67,6 +126,875 @@ function toSocialLinks(value: Prisma.JsonValue | null | undefined): SocialLinks 
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => typeof entryValue === 'string')
   ) as SocialLinks;
+}
+
+function normalizeLegacyVisualStyle(value?: string) {
+  const base = (value || '').trim();
+  const impactFallback = 'Direcao visual impactante, comercial e orientada a performance nas redes sociais';
+
+  if (!base) return impactFallback;
+
+  const looksInstitutional = /(minimal|editorial|institucional|clean|limp[oa]|s[oó]bri|clareza|modular|papel timbrado|apresenta[cç][aã]o)/i.test(base);
+  if (!looksInstitutional) return base;
+
+  return `${impactFallback}, evitando visual institucional, papel timbrado ou composicao excessivamente fria.`;
+}
+
+function parseVisualDirection(estiloVisual?: string) {
+  const normalizedStyle = normalizeLegacyVisualStyle(estiloVisual);
+  const fallback = {
+    palette: 'Extrair do site e redes da marca',
+    typography: 'Titulos: Sora | Corpo: Inter | Notas: tipografia forte, contrastada e pensada para capturar atencao rapidamente',
+    style: normalizedStyle,
+    gridLayout: 'Composicoes assimetricas, chamadas amplas, blocos de destaque e ritmo visual marcante',
+    compositionModel: 'Blocos de destaque',
+    textAlignment: 'Esquerda',
+    density: 'Media',
+    logoPlacement: 'Rodape',
+    frameStyle: 'Sem moldura',
+    compositionRules: 'Seguir a mesma logica compositiva do feed atual da marca, mantendo hierarquia, respiro e estrutura recorrente.',
+    recurringElements: 'Preservar elementos recorrentes da marca, como posicao do logo, tarjas, selos, fundos, molduras, texturas e padrao de CTA.',
+    socialReferenceNotes: 'As redes sociais cadastradas devem ser tratadas como referencia primaria para manter a identidade visual das pecas.',
+    avoidances: 'Evitar visual generico, papel timbrado, slide corporativo e qualquer composicao que fuja do padrao atual do feed.',
+    templates: ['Post estatico', 'Carrossel', 'Story'],
+  };
+
+  if (!estiloVisual) return fallback;
+
+  const getValue = (label: string) => {
+    const match = estiloVisual.match(new RegExp(`${label}:\\s*(.+)`, 'i'));
+    return match?.[1]?.trim() || '';
+  };
+
+  const templatesValue = getValue('Templates base');
+  const headingFont = getValue('Fonte titulos');
+  const headingFontSource = getValue('Fonte titulos origem');
+  const bodyFont = getValue('Fonte corpo');
+  const bodyFontSource = getValue('Fonte corpo origem');
+  const styleNotes = getValue('Notas tipograficas');
+  const fallbackNotes = getValue('Fallback tipografico');
+  const legacyTypography = getValue('Tipografia');
+  const compositionModel = getValue('Modelo de composicao');
+  const textAlignment = getValue('Alinhamento');
+  const density = getValue('Densidade');
+  const logoPlacement = getValue('Posicao da marca');
+  const frameStyle = getValue('Moldura');
+  const compositionRules = getValue('Regras de composicao');
+  const recurringElements = getValue('Elementos recorrentes');
+  const socialReferenceNotes = getValue('Referencias sociais');
+  const avoidances = getValue('Evitar');
+
+  const typographyParts = [
+    headingFont ? `Titulos: ${headingFont}` : '',
+    headingFontSource && headingFontSource !== 'Nao informado' ? `Origem titulos: ${headingFontSource}` : '',
+    bodyFont ? `Corpo: ${bodyFont}` : '',
+    bodyFontSource && bodyFontSource !== 'Nao informado' ? `Origem corpo: ${bodyFontSource}` : '',
+    styleNotes ? `Notas: ${styleNotes}` : '',
+    fallbackNotes ? `Fallback: ${fallbackNotes}` : '',
+  ].filter(Boolean);
+
+  return {
+    palette: getValue('Paleta') || fallback.palette,
+    typography: typographyParts.join(' | ') || legacyTypography || fallback.typography,
+    style: normalizeLegacyVisualStyle(getValue('Estilo') || fallback.style),
+    gridLayout: getValue('Grid/Layout') || fallback.gridLayout,
+    compositionModel: compositionModel || fallback.compositionModel,
+    textAlignment: textAlignment || fallback.textAlignment,
+    density: density || fallback.density,
+    logoPlacement: logoPlacement || fallback.logoPlacement,
+    frameStyle: frameStyle || fallback.frameStyle,
+    compositionRules: compositionRules || fallback.compositionRules,
+    recurringElements: recurringElements || fallback.recurringElements,
+    socialReferenceNotes: socialReferenceNotes || fallback.socialReferenceNotes,
+    avoidances: avoidances || fallback.avoidances,
+    templates: templatesValue
+      ? templatesValue.split(',').map(item => item.trim()).filter(Boolean)
+      : fallback.templates,
+  };
+}
+
+function sanitizePreviewText(value: string, fallback = '') {
+  return (value || fallback)
+    .replace(/[*_`#>[\]]/g, '')
+    .replace(/(?:TEXTO DA ARTE|LEGENDA|HASHTAGS|NOTA INTERNA|Página \d+|Slide \d+|Capa|CTA|Subtítulo:|Destaque visual:)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function escapeSvg(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function buildPaletteColors(palette: string) {
+  const colors = palette
+    .split(',')
+    .map(item => item.trim())
+    .filter(Boolean)
+    .map(item => item.match(/^#?[0-9A-Fa-f]{6}$/)?.[0] || item)
+    .map(item => item.startsWith('#') ? item : `#${item}`)
+    .slice(0, 4);
+
+  return {
+    primary: colors[0] || '#0F172A',
+    secondary: colors[1] || '#1D4ED8',
+    accent: colors[2] || '#F8FAFC',
+    neutral: colors[3] || '#CBD5E1',
+  };
+}
+
+function encodeSvgDataUrl(svg: string) {
+  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+}
+
+function wrapSvgText(text: string, maxCharsPerLine: number, maxLines: number) {
+  const words = sanitizePreviewText(text).split(' ').filter(Boolean);
+  const lines: string[] = [];
+  let currentLine = '';
+
+  for (const word of words) {
+    const nextLine = currentLine ? `${currentLine} ${word}` : word;
+    if (nextLine.length <= maxCharsPerLine) {
+      currentLine = nextLine;
+      continue;
+    }
+
+    if (currentLine) {
+      lines.push(currentLine);
+    }
+    currentLine = word;
+
+    if (lines.length === maxLines) {
+      break;
+    }
+  }
+
+  if (currentLine && lines.length < maxLines) {
+    lines.push(currentLine);
+  }
+
+  if (words.length > 0 && lines.length === maxLines) {
+    const joined = lines.join(' ');
+    if (joined.length < sanitizePreviewText(text).length) {
+      lines[maxLines - 1] = `${lines[maxLines - 1].replace(/[.,;:!?-]*$/, '')}...`;
+    }
+  }
+
+  return lines;
+}
+
+function renderSvgTextBlock(params: {
+  anchor?: 'start' | 'middle' | 'end';
+  x: number;
+  y: number;
+  lines: string[];
+  fontSize: number;
+  lineHeight: number;
+  fill: string;
+  fontFamily: string;
+  fontWeight: number | string;
+}) {
+  const { x, y, lines, fontSize, lineHeight, fill, fontFamily, fontWeight, anchor } = params;
+
+  return `
+    <text x="${x}" y="${y}" fill="${fill}" font-size="${fontSize}" font-family="${fontFamily}" font-weight="${fontWeight}" ${anchor ? `text-anchor="${anchor}"` : ''}>
+      ${lines
+        .map((line, index) => `<tspan x="${x}" dy="${index === 0 ? 0 : lineHeight}">${escapeSvg(line)}</tspan>`)
+        .join('')}
+    </text>
+  `;
+}
+
+function extractCopySections(copyText?: string) {
+  const sections = (copyText || '')
+    .split('---')
+    .map(section => section.trim())
+    .filter(Boolean);
+
+  const arteSection = sections.find(section => section.includes('TEXTO DA ARTE')) || '';
+  const legendaSection = sections.find(section => section.includes('LEGENDA')) || '';
+  const hashtagsSection = sections.find(section => section.includes('HASHTAGS')) || '';
+
+  const arteLines = arteSection
+    .split('\n')
+    .map(line => sanitizePreviewText(line))
+    .filter(Boolean)
+    .filter(line => !/^(TEXTO DA ARTE|Subtitulo|Destaque visual)$/i.test(line));
+
+  const legendaLines = legendaSection
+    .split('\n')
+    .map(line => sanitizePreviewText(line))
+    .filter(Boolean)
+    .filter(line => !/^LEGENDA$/i.test(line));
+
+  const hashtags = hashtagsSection
+    .split('\n')
+    .map(line => sanitizePreviewText(line))
+    .filter(Boolean)
+    .filter(line => !/^HASHTAGS$/i.test(line))
+    .join(' ');
+
+  return {
+    arteLines,
+    legendaLines,
+    hashtags,
+  };
+}
+
+type LayoutSignals = {
+  textAlign: 'left' | 'center';
+  useFrame: boolean;
+  dense: boolean;
+  logoPlacement: 'footer' | 'top';
+};
+
+function inferStylePresetFromBrand(brand: BrandData): StylePreset {
+  const explicitModel = brand.visualDirection.compositionModel.toLowerCase();
+  if (explicitModel.includes('centralizado')) return 'spotlight';
+  if (explicitModel.includes('assimetrico') || explicitModel.includes('carrossel denso')) return 'kinetic';
+  if (explicitModel.includes('blocos')) return 'bold';
+
+  const styleText = `${brand.estiloVisual} ${brand.visualDirection.style} ${brand.visualDirection.gridLayout} ${brand.visualDirection.compositionRules} ${brand.visualDirection.socialReferenceNotes}`.toLowerCase();
+
+  if (/(assimetr|dinamic|movimento|energia|ousad|vibrante|impact|campanha|forte contraste|scroll)/.test(styleText)) {
+    return 'kinetic';
+  }
+
+  if (/(premium|sofistic|elegan|luxo|refinad|clean com impacto|brilho|destaque)/.test(styleText)) {
+    return 'spotlight';
+  }
+
+  return 'bold';
+}
+
+function deriveLayoutSignals(brand: BrandData): LayoutSignals {
+  const source = `${brand.visualDirection.compositionRules} ${brand.visualDirection.recurringElements} ${brand.visualDirection.socialReferenceNotes} ${brand.visualDirection.avoidances}`.toLowerCase();
+  const alignment = brand.visualDirection.textAlignment.toLowerCase();
+  const densityValue = brand.visualDirection.density.toLowerCase();
+  const logoPlacementValue = brand.visualDirection.logoPlacement.toLowerCase();
+  const frameStyleValue = brand.visualDirection.frameStyle.toLowerCase();
+  const asksForStructure = /(estrutura visual|mesma estrutura|mesmo padrao|feed atual|identidade consistente|padrao recorrente)/.test(source);
+  const asksForBreathingRoom = /(margens|respiro|respiros|espacamento|distribuicao equilibrada|equilibrada|organizacao clara|hierarquia visual clara)/.test(source);
+  const asksForHighlightBlocks = /(blocos de destaque|blocos|areas de destaque|caixas|tarjas|selos|cards)/.test(source);
+  const asksForMoreGraphicLayers = /(elementos graficos|camadas|sobreposicoes|textura|texturas|mais preenchid|rico visualmente)/.test(source);
+
+  return {
+    textAlign: alignment.includes('central') || /(centraliz|centro|titulo central|texto central)/.test(source) ? 'center' : 'left',
+    useFrame: !frameStyleValue.includes('sem moldura') && (frameStyleValue.includes('moldura') || frameStyleValue.includes('box') || !/(sem moldura|full bleed|sem borda|sem frame)/.test(source) && (/(moldura|borda|frame|contorno|tarja|box)/.test(source) || asksForStructure || asksForBreathingRoom)),
+    dense: densityValue.includes('alta') || /(muito elemento|mais elemento|camada|sobreposi|denso|rico|preenchido|textura)/.test(source) || asksForHighlightBlocks || asksForMoreGraphicLayers,
+    logoPlacement: logoPlacementValue.includes('topo') || /(logo no topo|assinatura no topo|marca no topo)/.test(source) ? 'top' : 'footer',
+  };
+}
+
+function trimToMaxChars(value: string, max = 180) {
+  const sanitized = sanitizePreviewText(value);
+  if (sanitized.length <= max) return sanitized;
+
+  const trimmed = sanitized.slice(0, max - 3).replace(/\s+\S*$/, '').trim();
+  return `${trimmed || sanitized.slice(0, max - 3).trim()}...`;
+}
+
+function splitCopyIntoChunks(value: string) {
+  return value
+    .split(/\n+/)
+    .flatMap(line => line.split(/(?<=[.!?])\s+/))
+    .map(item => sanitizePreviewText(item))
+    .filter(Boolean);
+}
+
+function dedupeStrings(values: string[]) {
+  return values.filter((value, index) => values.indexOf(value) === index);
+}
+
+function normalizePostType(tipo: string) {
+  const normalized = (tipo || '').toLowerCase();
+  if (normalized.includes('reels')) return 'capa_reels';
+  if (normalized.includes('story')) return 'story';
+  if (normalized.includes('post')) return 'post_unico';
+  return 'carrossel';
+}
+
+function selectDesignerTemplate(copyText: string, tipo: string) {
+  const source = `${copyText} ${tipo}`.toLowerCase();
+  if (/(piramide|pirâmide|ferramentas de ia|ecossistema de ia|mapa de ferramentas)/.test(source)) {
+    return 'post_piramide_ia';
+  }
+  if (/(passo|passos|etapa|etapas|checklist|lista|guia|como fazer|1\.|2\.|3\.)/.test(source)) {
+    return 'carousel_lista';
+  }
+  if (/(eu|minha|meu|nossa historia|quando|antes|depois|aprendi|jornada|bastidor)/.test(source)) {
+    return 'carousel_storytelling';
+  }
+  if (/(acho|acredito|opiniao|na minha visao|verdade|mito|erro|posicionamento)/.test(source)) {
+    return 'carousel_autoridade';
+  }
+  return 'carousel_educativo';
+}
+
+function chooseTemplateFromObservation(obs: string | undefined, fallback: string) {
+  const source = (obs || '').toLowerCase();
+  if (!source) return fallback;
+  const explicit = source.match(/template\s+([a-z_]+)/)?.[1];
+  if (explicit && /^(carousel_(educativo|autoridade|lista|storytelling)|post_piramide_ia)$/.test(explicit)) return explicit;
+  if (/(piramide|pirâmide|infografico|infográfico|ecossistema de ia)/.test(source)) return 'post_piramide_ia';
+  if (/(story|storytelling|narrativ)/.test(source)) return 'carousel_storytelling';
+  if (/(lista|checklist|passo|passos|top\s*\d|bullet)/.test(source)) return 'carousel_lista';
+  if (/(autoridade|opiniao|posicionamento|premium|sofistic)/.test(source)) return 'carousel_autoridade';
+  if (/(educativo|didatico|explica|explicativo)/.test(source)) return 'carousel_educativo';
+  return fallback;
+}
+
+function chooseStylePresetFromObservation(obs: string | undefined, fallback: StylePreset) {
+  const source = (obs || '').toLowerCase();
+  if (!source) return fallback;
+  const explicit = source.match(/estilo\s+([a-z_]+)/)?.[1];
+  if (explicit === 'bold' || explicit === 'spotlight' || explicit === 'kinetic') return explicit;
+  if (/(elegant|elegante|sofistic|premium|refinad|luxo|minimal chic)/.test(source)) return 'spotlight';
+  if (/(dinamic|dinamico|ousad|energia|movimento|impact|vibrante)/.test(source)) return 'kinetic';
+  if (/(forte|editorial|bloco|estrutura|grade|grid)/.test(source)) return 'bold';
+  return fallback;
+}
+
+function chooseAlignmentFromObservation(obs: string | undefined, fallback: DesignAlignment) {
+  const source = (obs || '').toLowerCase();
+  if (!source) return fallback;
+  const explicit = source.match(/alinhamento\s+([a-z_]+)/)?.[1];
+  if (explicit === 'center' || explicit === 'central') return 'center';
+  if (explicit === 'left' || explicit === 'esquerda') return 'left';
+  if (/(central|center|centro)/.test(source)) return 'center';
+  if (/(esquerda|left|alinhado a esquerda)/.test(source)) return 'left';
+  return fallback;
+}
+
+function chooseLayoutVariant(template: string, stylePreset: StylePreset, versao: number, obs?: string): LayoutVariant {
+  const source = (obs || '').toLowerCase();
+  const explicit = source.match(/layout\s+([a-z_]+)/)?.[1];
+  if (explicit === 'editorial' || explicit === 'split' || explicit === 'spotlight' || explicit === 'stacked') {
+    return explicit;
+  }
+
+  if (/editorial/.test(source)) return 'editorial';
+  if (/(split|duas colunas|coluna lateral)/.test(source)) return 'split';
+  if (/(stack|empilhado|faixa inferior|bloco inferior)/.test(source)) return 'stacked';
+  if (/(spotlight|hero|premium|elegante|centralizado)/.test(source)) return 'spotlight';
+
+  const variantsByTemplate: Record<string, LayoutVariant[]> = {
+    carousel_educativo: ['editorial', 'split', 'stacked', 'spotlight'],
+    carousel_autoridade: ['spotlight', 'editorial', 'split', 'stacked'],
+    carousel_lista: ['split', 'editorial', 'stacked', 'spotlight'],
+    carousel_storytelling: ['stacked', 'editorial', 'spotlight', 'split'],
+    post_piramide_ia: ['editorial', 'spotlight', 'split', 'stacked'],
+  };
+
+  const variants = variantsByTemplate[template] || ['editorial', 'split', 'spotlight', 'stacked'];
+  const styleOffset = stylePreset === 'kinetic' ? 1 : stylePreset === 'spotlight' ? 2 : 0;
+  return variants[(versao + styleOffset) % variants.length];
+}
+
+function parseReferenceDesignInput(obs?: string) {
+  const source = obs || '';
+  const imageMatch = source.match(/imagem_referencia\s+(\S+)/i);
+  const noteMatch = source.match(/referencia_visual\s+([\s\S]+)/i);
+
+  return {
+    imageUrl: imageMatch?.[1],
+    notes: noteMatch?.[1]?.trim(),
+  };
+}
+
+function resolveSlideCount(postType: string, availableBlocks: number) {
+  if (postType === 'post_unico' || postType === 'capa_reels' || postType === 'story') {
+    return 1;
+  }
+
+  return Math.max(2, Math.min(5, availableBlocks));
+}
+
+function extractApprovedCopyBlocks(copyText?: string) {
+  const { arteLines, legendaLines } = extractCopySections(copyText);
+  const explicitSlides = arteLines
+    .map(line => {
+      const match = line.match(/^(?:pagina|página|slide)\s*(\d+)[:\s-]+(.+)$/i);
+      if (!match) return null;
+      return { index: Number(match[1]), text: trimToMaxChars(match[2]) };
+    })
+    .filter((value): value is { index: number; text: string } => Boolean(value))
+    .sort((a, b) => a.index - b.index)
+    .map(item => item.text);
+
+  if (explicitSlides.length > 0) {
+    return explicitSlides;
+  }
+
+  const candidateBlocks = dedupeStrings([
+    ...arteLines.map(line => trimToMaxChars(line)),
+    ...legendaLines.flatMap(splitCopyIntoChunks).map(line => trimToMaxChars(line)),
+  ]).filter(Boolean);
+
+  return candidateBlocks;
+}
+
+function extractApprovedCopyBlocksFromPayload(copyPayload?: CopyOutput) {
+  if (!copyPayload?.slides?.length) return [];
+  return copyPayload.slides
+    .map(slide => trimToMaxChars(slide.text))
+    .filter(Boolean);
+}
+
+function selectCtaFromBlocks(blocks: string[]) {
+  return [...blocks].reverse().find(block => /(\b(salve|envie|arrasta|clique|acesse|fale|comente|descubra|veja|comece|quero)\b|→)/i.test(block));
+}
+
+function splitTitleAndSubtitle(text: string) {
+  const sanitized = trimToMaxChars(text);
+  if (sanitized.length <= 72) {
+    return { title: sanitized, subtitle: undefined };
+  }
+
+  const separators = ['. ', ': ', ' - ', ' | ', '? '];
+  for (const separator of separators) {
+    const index = sanitized.indexOf(separator);
+    if (index > 24 && index < 90) {
+      return {
+        title: sanitized.slice(0, index + (separator.endsWith(' ') ? separator.length - 1 : separator.length)).trim(),
+        subtitle: trimToMaxChars(sanitized.slice(index + separator.length).trim(), 100) || undefined,
+      };
+    }
+  }
+
+  const words = sanitized.split(' ');
+  const midpoint = Math.max(4, Math.ceil(words.length / 2));
+  return {
+    title: trimToMaxChars(words.slice(0, midpoint).join(' '), 90),
+    subtitle: trimToMaxChars(words.slice(midpoint).join(' '), 100) || undefined,
+  };
+}
+
+function buildSlidesFromCopy(copyText: string | undefined, tipo: string, copyPayload?: CopyOutput) {
+  const postType = normalizePostType(tipo);
+  const blocks = extractApprovedCopyBlocksFromPayload(copyPayload).length > 0
+    ? extractApprovedCopyBlocksFromPayload(copyPayload)
+    : extractApprovedCopyBlocks(copyText);
+
+  if (blocks.length === 0) {
+    return {
+      postType,
+      slideTexts: ['Conteudo aprovado aguardando detalhamento final.'],
+    };
+  }
+
+  if (postType !== 'carrossel') {
+    return {
+      postType,
+      slideTexts: [trimToMaxChars(blocks[0])],
+    };
+  }
+
+  const headline = trimToMaxChars(blocks[0]);
+  const cta = trimToMaxChars(selectCtaFromBlocks(blocks) || blocks[blocks.length - 1]);
+  const middlePool = blocks.slice(1).filter(block => block !== cta);
+  const slideCount = resolveSlideCount(postType, blocks.length);
+  const middleCount = Math.max(0, slideCount - 2);
+  const middleSlides = middlePool.slice(0, middleCount).map(block => trimToMaxChars(block));
+  const slideTexts = dedupeStrings([headline, ...middleSlides, cta]).slice(0, 5);
+
+  if (slideTexts.length === 1 && blocks[1]) {
+    slideTexts.push(trimToMaxChars(blocks[1]));
+  }
+
+  return {
+    postType,
+    slideTexts,
+  };
+}
+
+function buildSlideElements(index: number, total: number) {
+  const elements: DesignElement[] = [];
+  if (index === total - 1) elements.push('logo');
+  if (index !== total - 1) elements.push('divider');
+  if (index === total - 1) elements.push('cta_button');
+  return elements.slice(0, 3);
+}
+
+function buildSlideBackground(index: number, total: number): DesignBackground {
+  if (index === 0) return 'gradient';
+  if (index === total - 1) return 'primary';
+  return index % 2 === 0 ? 'primary' : 'secondary';
+}
+
+function buildDesignerOutput(params: {
+  brand: BrandData;
+  tipo: string;
+  versao?: number;
+  obs?: string;
+  copyText?: string;
+  copyPayload?: CopyOutput;
+}) {
+  const { brand, tipo, copyText, copyPayload, obs, versao = 0 } = params;
+  const colors = buildPaletteColors(brand.visualDirection.palette);
+  const baseTemplate = selectDesignerTemplate(copyText || '', tipo);
+  const template = chooseTemplateFromObservation(obs, baseTemplate);
+  const baseStylePreset = inferStylePresetFromBrand(brand);
+  const stylePreset = chooseStylePresetFromObservation(obs, baseStylePreset);
+  const layoutVariant = chooseLayoutVariant(template, stylePreset, versao, obs);
+  const layoutSignals = deriveLayoutSignals(brand);
+  const referenceInput = parseReferenceDesignInput(obs);
+  const fontMatchTitle = brand.visualDirection.typography.match(/Titulos:\s*([^|]+)/i);
+  const fontMatchBody = brand.visualDirection.typography.match(/Corpo:\s*([^|]+)/i);
+  const titleFont = sanitizePreviewText(fontMatchTitle?.[1] || 'Sora');
+  const bodyFont = sanitizePreviewText(fontMatchBody?.[1] || 'Inter');
+  const { postType, slideTexts } = buildSlidesFromCopy(copyText, tipo, copyPayload);
+  const width = 1080;
+  const height = postType === 'capa_reels' || postType === 'story' ? 1920 : 1350;
+  const resolvedAlignment = chooseAlignmentFromObservation(obs, layoutSignals.textAlign);
+  const alignment: DesignAlignment = versao % 2 === 1 && !obs ? (resolvedAlignment === 'left' ? 'center' : 'left') : resolvedAlignment;
+
+  const slides = slideTexts.map((text, index) => {
+    const parts = splitTitleAndSubtitle(text);
+    return {
+      width,
+      height,
+      background: versao % 3 === 1
+        ? (index === 0 ? 'primary' : index === slideTexts.length - 1 ? 'gradient' : buildSlideBackground(index + 1, slideTexts.length + 1))
+        : versao % 3 === 2
+          ? (index % 2 === 0 ? 'gradient' : 'secondary')
+          : buildSlideBackground(index, slideTexts.length),
+      title: parts.title,
+      subtitle: parts.subtitle,
+      alignment: index === 0 && template === 'carousel_storytelling' ? 'left' : alignment,
+      elements: buildSlideElements(index, slideTexts.length),
+    } satisfies DesignSlide;
+  });
+
+  const theme = {
+    primary: colors.primary,
+    secondary: colors.secondary,
+    accent: colors.accent,
+    neutral: colors.neutral,
+    titleFont,
+    bodyFont,
+  };
+  const referenceTemplate = referenceInput.imageUrl
+    ? buildReferenceTemplateFromSiteImage({
+        imageUrl: referenceInput.imageUrl,
+        siteName: brand.nomeMarca,
+        headline: slideTexts[0],
+        subheadline: referenceInput.notes || slideTexts[1] || `${brand.nomeMarca} como referência visual`,
+        sections: slideTexts.slice(1, 4).map((text, index) => ({
+          title: index === 0 ? 'Leitura visual principal' : `Bloco ${index + 2}`,
+          body: text,
+        })),
+      })
+    : undefined;
+  const htmlTemplates = buildHtmlTemplates({
+    brandName: brand.nomeMarca,
+    slides,
+    template,
+    stylePreset,
+    layoutVariant,
+    theme,
+    referenceTemplate,
+  });
+
+  return {
+    template,
+    style_preset: stylePreset,
+    layout_variant: layoutVariant,
+    reference_mode: Boolean(referenceTemplate),
+    reference_image_url: referenceInput.imageUrl,
+    reference_template_name: referenceTemplate?.name,
+    theme,
+    slides_json: slides,
+    html_templates: htmlTemplates,
+    export: slides.map((_, index) => `slide_${String(index + 1).padStart(2, '0')}.png`),
+  } satisfies DesignerOutput;
+}
+
+function buildPreviewCard(params: {
+  brand: BrandData;
+  title: string;
+  subtitle: string;
+  body?: string;
+  kicker: string;
+  footer: string;
+  variant: 'cover' | 'content' | 'cta';
+  stylePreset: StylePreset;
+}) {
+  const { brand, title, subtitle, body, kicker, footer, variant, stylePreset } = params;
+  const colors = buildPaletteColors(brand.visualDirection.palette);
+  const layoutSignals = deriveLayoutSignals(brand);
+  const textX = layoutSignals.textAlign === 'center' ? 540 : 98;
+  const textAnchor = layoutSignals.textAlign === 'center' ? 'middle' : 'start';
+  const titleSize = variant === 'cover' ? 108 : variant === 'cta' ? 78 : 68;
+  const subtitleSize = variant === 'cover' ? 30 : 24;
+  const bodySize = 22;
+  const titleLines = wrapSvgText(title, variant === 'cover' ? 13 : 16, variant === 'cta' ? 3 : 4);
+  const subtitleLines = wrapSvgText(subtitle, variant === 'cover' ? 28 : 34, 3);
+  const bodyLines = body ? wrapSvgText(body, 34, variant === 'content' ? 5 : 3) : [];
+  const titleBlock = renderSvgTextBlock({
+    x: textX,
+    y: variant === 'cover' ? 320 : variant === 'content' ? 270 : 330,
+    lines: titleLines,
+    fontSize: titleSize,
+    lineHeight: Math.round(titleSize * 0.92),
+    fill: '#F8FAFC',
+    fontFamily: 'Sora, Inter, Arial, sans-serif',
+    fontWeight: 800,
+    anchor: textAnchor,
+  });
+  const subtitleBlock = renderSvgTextBlock({
+    x: layoutSignals.textAlign === 'center' ? 540 : 104,
+    y: variant === 'cover' ? 760 : variant === 'content' ? 760 : 720,
+    lines: subtitleLines,
+    fontSize: subtitleSize,
+    lineHeight: Math.round(subtitleSize * 1.35),
+    fill: 'rgba(248,250,252,0.92)',
+    fontFamily: 'Inter, Arial, sans-serif',
+    fontWeight: 700,
+    anchor: textAnchor,
+  });
+  const bodyBlock = bodyLines.length > 0
+    ? renderSvgTextBlock({
+        x: layoutSignals.textAlign === 'center' ? 540 : 104,
+        y: variant === 'content' ? 920 : 900,
+        lines: bodyLines,
+        fontSize: bodySize,
+        lineHeight: Math.round(bodySize * 1.45),
+        fill: 'rgba(248,250,252,0.84)',
+        fontFamily: 'Inter, Arial, sans-serif',
+        fontWeight: 400,
+        anchor: textAnchor,
+      })
+    : '';
+  const anchorAttr = `text-anchor="${textAnchor}"`;
+  const logoY = layoutSignals.logoPlacement === 'top' ? 200 : 1268;
+  const footerY = layoutSignals.logoPlacement === 'top' ? 232 : 1304;
+  const brandStamp = `<text x="${layoutSignals.logoPlacement === 'top' ? 980 : textX}" y="${logoY}" fill="rgba(248,250,252,0.95)" font-size="24" font-family="Inter, Arial, sans-serif" font-weight="800" letter-spacing="1" ${layoutSignals.logoPlacement === 'top' ? 'text-anchor="end"' : anchorAttr}>${escapeSvg(brand.nomeMarca.toUpperCase())}</text>`;
+  const footerText = `<text x="${layoutSignals.logoPlacement === 'top' ? 980 : textX}" y="${footerY}" fill="rgba(248,250,252,0.66)" font-size="18" font-family="Inter, Arial, sans-serif" font-weight="500" ${layoutSignals.logoPlacement === 'top' ? 'text-anchor="end"' : anchorAttr}>${escapeSvg(footer)}</text>`;
+  const kickerChip = `<rect x="98" y="94" width="190" height="46" rx="23" fill="rgba(255,255,255,0.16)"/><text x="128" y="123" fill="white" font-size="22" font-family="Inter, Arial, sans-serif" font-weight="800" letter-spacing="2">${escapeSvg(kicker.toUpperCase())}</text>`;
+  const frame = layoutSignals.useFrame ? `<rect x="58" y="58" width="964" height="1234" rx="46" fill="none" stroke="rgba(255,255,255,0.18)" stroke-width="3"/>` : '';
+  const extraDensity = layoutSignals.dense ? `<circle cx="860" cy="300" r="120" fill="rgba(255,255,255,0.08)"/><circle cx="220" cy="1010" r="90" fill="rgba(255,255,255,0.08)"/><rect x="760" y="520" width="140" height="140" rx="28" fill="rgba(255,255,255,0.08)" transform="rotate(12 760 520)"/>` : '';
+
+  const styleLayouts: Record<StylePreset, Record<'cover' | 'content' | 'cta', string>> = {
+    bold: {
+      cover: `
+        <rect width="1080" height="1350" fill="${colors.primary}"/>
+        <rect x="-80" y="-30" width="560" height="560" rx="120" fill="${colors.secondary}" transform="rotate(-14 0 0)"/>
+        <rect x="620" y="720" width="520" height="520" rx="96" fill="${colors.accent}" transform="rotate(16 620 720)"/>
+        <rect x="760" y="120" width="220" height="220" rx="44" fill="rgba(255,255,255,0.12)" transform="rotate(10 760 120)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1120" width="420" height="84" rx="42" fill="${colors.accent}"/>
+        <text x="150" y="1173" fill="${colors.primary}" font-size="30" font-family="Inter, Arial, sans-serif" font-weight="800">Visual de campanha real</text>
+        ${brandStamp}
+        ${footerText}
+      `,
+      content: `
+        <rect width="1080" height="1350" fill="${colors.secondary}"/>
+        <polygon points="0,0 1080,0 780,560 0,720" fill="${colors.primary}"/>
+        <rect x="740" y="180" width="240" height="240" rx="48" fill="${colors.accent}" transform="rotate(8 740 180)"/>
+        <circle cx="850" cy="930" r="170" fill="rgba(255,255,255,0.13)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1110" width="360" height="18" rx="9" fill="${colors.accent}"/>
+        ${brandStamp}
+        ${footerText}
+      `,
+      cta: `
+        <rect width="1080" height="1350" fill="${colors.primary}"/>
+        <circle cx="980" cy="180" r="230" fill="${colors.accent}" opacity="0.88"/>
+        <circle cx="120" cy="1210" r="280" fill="${colors.secondary}" opacity="0.7"/>
+        <rect x="760" y="420" width="180" height="180" rx="40" fill="rgba(255,255,255,0.12)" transform="rotate(12 760 420)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1088" width="500" height="98" rx="49" fill="white"/>
+        <text x="164" y="1149" fill="${colors.primary}" font-size="34" font-family="Inter, Arial, sans-serif" font-weight="800">Quero uma arte assim</text>
+        ${brandStamp}
+        ${footerText}
+      `,
+    },
+    spotlight: {
+      cover: `
+        <rect width="1080" height="1350" fill="${colors.secondary}"/>
+        <rect x="0" y="0" width="1080" height="1350" fill="url(#bg)" opacity="0.82"/>
+        <circle cx="180" cy="200" r="210" fill="${colors.accent}" opacity="0.9"/>
+        <circle cx="900" cy="1040" r="300" fill="${colors.primary}" opacity="0.36"/>
+        <polygon points="660,80 1040,120 920,420" fill="rgba(255,255,255,0.16)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1094" width="400" height="18" rx="9" fill="white"/>
+        ${brandStamp}
+        ${footerText}
+      `,
+      content: `
+        <rect width="1080" height="1350" fill="${colors.primary}"/>
+        <rect x="-60" y="780" width="620" height="520" rx="120" fill="${colors.accent}" transform="rotate(-12 0 780)"/>
+        <rect x="690" y="120" width="280" height="280" rx="60" fill="${colors.secondary}" transform="rotate(10 690 120)"/>
+        <rect x="770" y="460" width="140" height="140" rx="30" fill="rgba(255,255,255,0.18)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        ${brandStamp}
+        ${footerText}
+      `,
+      cta: `
+        <rect width="1080" height="1350" fill="${colors.accent}"/>
+        <rect x="0" y="0" width="1080" height="1350" fill="${colors.primary}" opacity="0.82"/>
+        <circle cx="960" cy="220" r="250" fill="${colors.secondary}" opacity="0.82"/>
+        <polygon points="0,990 420,860 640,1350 0,1350" fill="rgba(255,255,255,0.14)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1088" width="470" height="98" rx="49" fill="${colors.accent}"/>
+        <text x="164" y="1149" fill="${colors.primary}" font-size="34" font-family="Inter, Arial, sans-serif" font-weight="800">Parar o scroll agora</text>
+        ${brandStamp}
+        ${footerText}
+      `,
+    },
+    kinetic: {
+      cover: `
+        <rect width="1080" height="1350" fill="${colors.primary}"/>
+        <polygon points="0,0 1080,0 820,340 0,620" fill="${colors.secondary}"/>
+        <polygon points="1080,1350 260,1350 520,860 1080,640" fill="${colors.accent}" opacity="0.96"/>
+        <rect x="760" y="180" width="160" height="160" rx="28" fill="rgba(255,255,255,0.18)" transform="rotate(14 760 180)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        ${brandStamp}
+        ${footerText}
+      `,
+      content: `
+        <rect width="1080" height="1350" fill="${colors.secondary}"/>
+        <polygon points="0,0 1080,0 1080,300 220,460 0,340" fill="${colors.primary}"/>
+        <polygon points="1080,1350 520,1350 760,920 1080,820" fill="${colors.accent}" opacity="0.94"/>
+        <rect x="740" y="210" width="220" height="220" rx="34" fill="rgba(255,255,255,0.16)" transform="rotate(9 740 210)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        ${brandStamp}
+        ${footerText}
+      `,
+      cta: `
+        <rect width="1080" height="1350" fill="${colors.primary}"/>
+        <polygon points="0,0 1080,0 760,430 0,720" fill="${colors.secondary}"/>
+        <polygon points="1080,1350 380,1350 640,930 1080,760" fill="${colors.accent}" opacity="0.95"/>
+        <circle cx="180" cy="1100" r="180" fill="rgba(255,255,255,0.12)"/>
+        ${frame}
+        ${extraDensity}
+        ${kickerChip}
+        ${titleBlock}
+        ${subtitleBlock}
+        ${bodyBlock}
+        <rect x="98" y="1090" width="490" height="98" rx="49" fill="white"/>
+        <text x="154" y="1151" fill="${colors.primary}" font-size="34" font-family="Inter, Arial, sans-serif" font-weight="800">Mais impacto visual</text>
+        ${brandStamp}
+        ${footerText}
+      `,
+    },
+  };
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350" fill="none">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="${colors.primary}"/>
+          <stop offset="100%" stop-color="${colors.secondary}"/>
+        </linearGradient>
+      </defs>
+      ${styleLayouts[stylePreset][variant]}
+    </svg>
+  `;
+
+  return encodeSvgDataUrl(svg);
+}
+
+// Legacy SVG preview helper kept temporarily for fallback experiments.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function buildDesignPreviews(params: {
+  brand: BrandData;
+  tema: string;
+  titulo: string;
+  subtitulo: string;
+  copyText?: string;
+  versao: number;
+}) {
+  const { brand, tema, titulo, subtitulo, copyText } = params;
+  const { arteLines, legendaLines } = extractCopySections(copyText);
+  const stylePreset = inferStylePresetFromBrand(brand);
+  const cleanTema = sanitizePreviewText(tema, 'Conteudo de marca');
+  const cleanTitle = sanitizePreviewText(arteLines[0] || titulo, cleanTema);
+  const cleanSubtitle = sanitizePreviewText(arteLines[1] || subtitulo, 'Mensagem principal da copy aprovada');
+  const contentTitle = sanitizePreviewText(arteLines[2] || cleanTema, cleanTema);
+  const contentSnippet = sanitizePreviewText(legendaLines[0] || cleanSubtitle, cleanSubtitle);
+  const contentBody = sanitizePreviewText(legendaLines.slice(1, 4).join(' '), cleanSubtitle);
+  const ctaSnippet = sanitizePreviewText(
+    legendaLines.find(line => /salve|envie|arrasta|comenta|fale|clique|proximo passo/i.test(line)) || arteLines[arteLines.length - 1],
+    'Seu proximo passo comeca com uma mensagem clara.'
+  );
+
+  return [
+    buildPreviewCard({
+      brand,
+      title: cleanTitle,
+      subtitle: cleanSubtitle,
+      body: sanitizePreviewText(arteLines.slice(2, 4).join(' ')),
+      kicker: 'Capa',
+      footer: `${brand.segmento || 'Marketing'} • identidade aplicada • ${stylePreset}`,
+      variant: 'cover',
+      stylePreset,
+    }),
+    buildPreviewCard({
+      brand,
+      title: contentTitle,
+      subtitle: contentSnippet,
+      body: contentBody,
+      kicker: 'Conteudo',
+      footer: `Copy aprovada transformada em hierarquia visual • ${stylePreset}`,
+      variant: 'content',
+      stylePreset,
+    }),
+    buildPreviewCard({
+      brand,
+      title: 'Seu proximo passo',
+      subtitle: ctaSnippet,
+      body: sanitizePreviewText(`${brand.visualDirection.style}. ${brand.visualDirection.gridLayout}`),
+      kicker: 'CTA',
+      footer: `${brand.nomeMarca} • direcao visual atualizada • ${stylePreset}`,
+      variant: 'cta',
+      stylePreset,
+    }),
+  ];
 }
 
 app.use(cors());
@@ -278,22 +1206,144 @@ function gerarPesquisa(tema: string, objetivo: string, versao: number) {
   return blocos[versao % blocos.length];
 }
 
-function gerarCopy(tema: string, objetivo: string, versao: number, pesquisa?: string, obs?: string) {
-  const linhas = pesquisa?.split('\n').filter(l => l.trim().length > 0) || [];
-  const fraseDado1 = linhas.find(l => /\d+%/.test(l)) || `O tema "${tema}" apresenta crescimento expressivo em buscas e engajamento nas redes`;
-  const fraseDado2 = linhas.find((l, i) => /\d+%/.test(l) && i !== linhas.indexOf(fraseDado1)) || 'Marcas que abordam esse assunto com dados reais conquistam mais autoridade e confiança';
-  const kwMatch = pesquisa?.match(/Palavras-chave:\s*(.+)/);
-  const palavrasChave = kwMatch ? kwMatch[1].split(',').map(k => k.trim()).slice(0, 4) : [tema.split(' ')[0], 'Estratégia', 'Resultados'];
-  const hashtags = palavrasChave.map(k => `#${k.replace(/\s+/g, '')}`).join(' ') + ` #${tema.replace(/\s+/g, '')} #MarketingDigital`;
-  const instrucaoUsuario = obs ? `\n\n💬 *Ajuste aplicado conforme orientação do usuário: "${obs}"*` : '';
-  const blocoInterno = objetivo ? `\n\n---\n\n📋 **NOTA INTERNA (não publicar):**\nObjetivo estratégico: ${objetivo}` : '';
+function normalizeCopySentence(value: string) {
+  const removableTokens = ['•', '🔗', '📊', '📈', '👉', '✏️', '🏷️', '📝', '📋'];
+  return removableTokens.reduce((acc, token) => acc.replaceAll(token, ''), value)
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  const blocos = [
-    `✏️ **TEXTO DA ARTE:**\n"${tema}"\nSubtítulo: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\n\n---\n\n📝 **LEGENDA:**\n${fraseDado1.trim()}\n\nE isso muda completamente o jogo para quem atua nesse mercado.\n\nAlém disso: ${fraseDado2.trim().toLowerCase()}\n\nO cenário é claro — quem entende e aplica ${tema.toLowerCase()} agora está construindo uma vantagem competitiva real.\n\nA dúvida não é mais se vale a pena, mas o que você está esperando para começar.\n\n👉 Salve este post e envie para alguém que precisa ver esses dados.\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`,
-    `✏️ **TEXTO DA ARTE:**\n"Você já parou para olhar os dados sobre ${tema.toLowerCase()}?"\nDestaque visual: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\n\n---\n\n📝 **LEGENDA:**\nOs dados sobre ${tema.toLowerCase()} estão surpreendendo o mercado:\n\n📊 ${fraseDado1.trim()}\n📈 ${fraseDado2.trim()}\n\nIsso não é achismo — são números reais de pesquisas recentes.\n\nE o mais importante: quem está atento a esses dados já está tomando decisões melhores, mais rápido.\n\nNão espere o mercado te dizer o que já está acontecendo. Antecipe-se.\n\nQual desses dados mais chamou sua atenção? Me conta nos comentários 👇\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`,
-    `✏️ **TEXTO DA ARTE:**\nPágina 1: "${tema}"\nPágina 2: "${fraseDado1.replace(/^.*?(\d+%)/, '$1').trim()}"\nPágina 3: "Quem entende os dados, lidera o mercado"\nPágina 4: "Seu próximo passo começa aqui →"\n\n---\n\n📝 **LEGENDA:**\nVamos colocar os dados na mesa sobre ${tema.toLowerCase()}? 📊\n\n${fraseDado1.trim()}\n\nMas não para por aí:\n${fraseDado2.trim()}\n\nEsses números mostram uma direção clara: ${tema.toLowerCase()} não é mais opcional para quem quer crescer de verdade.\n\nE a boa notícia? Você está lendo isso agora. Ainda dá tempo de agir.\n\nArrasta pro lado e veja como aplicar isso no seu negócio →\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`
+function extractCopyInputs(tema: string, objetivo: string, pesquisa?: string, obs?: string) {
+  const linhas = (pesquisa || '')
+    .split('\n')
+    .map(line => normalizeCopySentence(line))
+    .filter(Boolean);
+
+  const metadados = /^(contexto|objetivo alinhado|objetivo|palavras-chave|fontes de inteligência utilizadas|\d+\.)/i;
+  const insights = linhas.filter(line => !metadados.test(line));
+  const dadoPrincipal = insights.find(line => /\d+%/.test(line)) || `O tema ${tema} apresenta crescimento expressivo em buscas e engajamento nas redes.`;
+  const dadoComplementar = insights.find(line => line !== dadoPrincipal) || 'Oportunidade clara para transformar interesse em autoridade e ação.';
+  const palavrasChaveMatch = pesquisa?.match(/Palavras-chave:\s*(.+)/i);
+  const palavrasChave = palavrasChaveMatch
+    ? palavrasChaveMatch[1].split(',').map(k => k.trim()).filter(Boolean).slice(0, 4)
+    : [tema.split(' ')[0], 'Marketing', 'Resultados'];
+  const objetivoNormalizado = normalizeCopySentence(objetivo || `Gerar valor prático sobre ${tema}.`);
+  const observacaoNormalizada = normalizeCopySentence(obs || '');
+
+  return {
+    dadoPrincipal,
+    dadoComplementar,
+    palavrasChave,
+    objetivoNormalizado,
+    observacaoNormalizada,
+  };
+}
+
+function buildHashtags(tema: string, palavrasChave: string[]) {
+  const base = palavrasChave.map(k => `#${k.replace(/\s+/g, '')}`);
+  return [...base, `#${tema.replace(/\s+/g, '')}`, '#MarketingDigital'].join(' ');
+}
+
+function buildCarouselArteItems(tema: string, versao: number, inputs: ReturnType<typeof extractCopyInputs>) {
+  const { dadoPrincipal, dadoComplementar, objetivoNormalizado, observacaoNormalizada } = inputs;
+  const ctaBase = objetivoNormalizado ? `Avance com: ${objetivoNormalizado}` : 'Seu próximo passo começa aqui';
+
+  const pagesByVersion = [
+    [
+      `${tema}: o que os dados mostram agora`,
+      dadoPrincipal,
+      dadoComplementar,
+      `O que isso muda na prática: ${objetivoNormalizado}`,
+      `${ctaBase} →`,
+    ],
+    [
+      `Antes de ignorar ${tema}, veja isso`,
+      `Dado-chave: ${dadoPrincipal}`,
+      `Leitura estratégica: ${dadoComplementar}`,
+      observacaoNormalizada || `Direção sugerida: use ${tema.toLowerCase()} com clareza e consistência.`,
+      `Quer transformar isso em ação? ${ctaBase} →`,
+    ],
+    [
+      `${tema}: 4 sinais de que virou prioridade`,
+      `Sinal 1: ${dadoPrincipal}`,
+      `Sinal 2: ${dadoComplementar}`,
+      `Sinal 3: ${objetivoNormalizado}`,
+      `Sinal 4: hora de agir →`,
+    ],
   ];
-  return blocos[versao % blocos.length];
+
+  return pagesByVersion[versao % pagesByVersion.length].map(text => trimToMaxChars(text, 140));
+}
+
+function buildLegendaParagraphs(tema: string, versao: number, inputs: ReturnType<typeof extractCopyInputs>) {
+  const { dadoPrincipal, dadoComplementar, objetivoNormalizado, observacaoNormalizada } = inputs;
+
+  const legendas = [
+    [
+      `Quando o assunto é ${tema.toLowerCase()}, os sinais estão cada vez mais claros.`,
+      dadoPrincipal,
+      `Além disso, ${dadoComplementar.charAt(0).toLowerCase()}${dadoComplementar.slice(1)}`,
+      `Na prática, isso aponta para uma prioridade: ${objetivoNormalizado}`,
+      'Salve este conteúdo e compartilhe com quem precisa tomar decisões melhores agora.',
+    ],
+    [
+      `Muita gente ainda trata ${tema.toLowerCase()} como tendência. Os dados contam outra história.`,
+      `📊 ${dadoPrincipal}`,
+      `📈 ${dadoComplementar}`,
+      observacaoNormalizada || `Se o objetivo é ${objetivoNormalizado.toLowerCase()}, este é o tipo de sinal que merece atenção.`,
+      'Qual desses pontos mais conversa com a sua realidade hoje?',
+    ],
+    [
+      `Se você quer usar ${tema.toLowerCase()} com mais critério, comece pela leitura correta do cenário.`,
+      dadoPrincipal,
+      dadoComplementar,
+      `O movimento mais inteligente agora é conectar esse contexto com ${objetivoNormalizado.toLowerCase()}.`,
+      'Arraste, salve e volte aqui quando for revisar sua estratégia.',
+    ],
+  ];
+
+  return legendas[versao % legendas.length];
+}
+
+function inferCopySlideRole(index: number, total: number): CopySlideRole {
+  if (index === 0) return 'hook';
+  if (index === total - 1) return 'cta';
+  if (index === 1) return 'proof';
+  return 'insight';
+}
+
+function buildCopyOutput(tema: string, objetivo: string, versao: number, pesquisa?: string, obs?: string): CopyOutput {
+  const inputs = extractCopyInputs(tema, objetivo, pesquisa, obs);
+  const arteItems = buildCarouselArteItems(tema, versao, inputs);
+  const caption = buildLegendaParagraphs(tema, versao, inputs);
+  const hashtags = buildHashtags(tema, inputs.palavrasChave).split(' ').filter(Boolean);
+
+  return {
+    tema,
+    post_type: 'carrossel',
+    hook: arteItems[0] || trimToMaxChars(tema, 140),
+    slides: arteItems.map((text, index) => ({
+      index: index + 1,
+      role: inferCopySlideRole(index, arteItems.length),
+      text,
+    })),
+    caption,
+    hashtags,
+    strategic_objective: inputs.objetivoNormalizado || undefined,
+    user_direction: inputs.observacaoNormalizada || undefined,
+  };
+}
+
+function gerarCopy(tema: string, objetivo: string, versao: number, pesquisa?: string, obs?: string) {
+  const output = buildCopyOutput(tema, objetivo, versao, pesquisa, obs);
+  const arte = output.slides.map(slide => `Página ${slide.index}: "${slide.text}"`).join('\n');
+  const legenda = output.caption.join('\n\n');
+  const hashtags = output.hashtags.join(' ');
+  const instrucaoUsuario = output.user_direction ? `\n\n💬 *Ajuste aplicado conforme orientação do usuário: "${output.user_direction}"*` : '';
+  const blocoInterno = output.strategic_objective ? `\n\n---\n\n📋 **NOTA INTERNA (não publicar):**\nObjetivo estratégico: ${output.strategic_objective}` : '';
+
+  return `✏️ **TEXTO DA ARTE:**\n${arte}\n\n---\n\n📝 **LEGENDA:**\n${legenda}\n\n---\n\n🏷️ **HASHTAGS:**\n${hashtags}${blocoInterno}${instrucaoUsuario}`;
 }
 
 async function fetchBrandData(contentId: string) {
@@ -310,53 +1360,40 @@ async function fetchBrandData(contentId: string) {
     segmento: biz?.segmento || '',
     estiloVisual: brand?.estilo_visual || '',
     tomDeVoz: brand?.tom_de_voz || '',
+    visualDirection: parseVisualDirection(brand?.estilo_visual || ''),
   };
 }
 
-function gerarDesign(tema: string, tipo: string, versao: number, brand: BrandData, obs?: string, copyText?: string) {
-  const redesList = Object.entries(brand.redes || {})
-    .filter(([, v]) => Boolean(v))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(' | ') || 'Sem redes cadastradas';
+function gerarDesign(tema: string, tipo: string, versao: number, brand: BrandData, obs?: string, copyText?: string, copyPayload?: CopyOutput) {
+  const payload = buildDesignerOutput({
+    brand,
+    tipo,
+    versao,
+    obs,
+    copyText,
+    copyPayload,
+  });
 
-  const instrucao = obs ? `\n\n💬 *Ajuste aplicado conforme orientação do usuário: "${obs}"*` : '';
-  let tituloSugerido = tema;
-  let subtituloSugerido = "Frase de impacto extraída da copy";
-  const sourceText = obs || copyText || "";
+  const notas = [
+    `Tema: ${tema}`,
+    `Versao: ${versao + 1}`,
+    `Template selecionado: ${selectDesignerTemplate(copyText || '', tipo)}`,
+    `Formato: ${normalizePostType(tipo)}`,
+    obs ? `Ajuste aplicado: ${sanitizePreviewText(obs)}` : '',
+  ].filter(Boolean);
 
-  if (sourceText) {
-    const capaMatch = sourceText.match(/(?:Slide 1|Capa|Página 1|P1)[:\s-]+(.*?)(?=\n|Slide 2|Página 2|P2|$)/i);
-    if (capaMatch) tituloSugerido = capaMatch[1].trim().replace(/^"(.*)"$/, '$1');
-
-    const subMatch = sourceText.match(/(?:Slide 2|Página 2|P2)[:\s-]+(.*?)(?=\n|Slide 3|Página 3|P3|$)/i);
-    if (subMatch) subtituloSugerido = `${subMatch[1].trim().replace(/^"(.*)"$/, '$1').substring(0, 100)}...`;
-  }
-
-  const identidadeBloco = `📋 **IDENTIDADE VISUAL DA MARCA:**\n• Marca: ${brand.nomeMarca}\n• Segmento: ${brand.segmento || 'Não definido'}\n• Estilo visual: ${brand.estiloVisual || 'Seguir padrão do site e redes sociais da marca'}\n• Site: ${brand.site || 'Não informado'}\n• Redes: ${redesList}`;
-  const dimensoes = tipo?.toLowerCase().includes('carrossel') || tipo?.toLowerCase().includes('post')
-    ? '1080 x 1350px (4:5 — padrão Feed/Carrossel Instagram)'
-    : tipo?.toLowerCase().includes('stories') || tipo?.toLowerCase().includes('reels')
-      ? '1080 x 1920px (9:16 — padrão Stories/Reels)'
-      : '1080 x 1350px (4:5 — padrão Feed)';
-
-  const isGaio = brand.nomeMarca.toLowerCase().includes('gaio');
-  const setIndex = isGaio ? 2 : (versao % 3) + 1;
-  const suffix = setIndex === 1 ? '' : `_v${setIndex}`;
-  const timestamp = Date.now();
-
-  const blocos = [
-    `🎨 **BRIEFING DE DESIGN (Versão ${versao + 1}) — ${tipo || 'Post'}**\n\n${identidadeBloco}\n\n---\n\n🖼️ **SUGESTÃO DE ARTE:**\nFormato: ${tipo || 'Post'} | Dimensão: ${dimensoes}\nTítulo principal: "${tituloSugerido}"\nSubtítulo: ${subtituloSugerido}\n\n📐 **Diretrizes Atualizadas:**\n• Usar as cores da identidade visual da marca (conforme site: ${brand.site || 'referência do perfil'})\n• Tipografia alinhada com o padrão das redes sociais da ${brand.nomeMarca}\n• Logo da ${brand.nomeMarca} no rodapé\n• Ícones minimalistas e modernos para reforçar o tema\n• Manter consistência visual com posts anteriores das redes da marca\n\n🎯 **Referência visual:** Analisar o estilo dos últimos posts publicados nas redes (${redesList}) e manter a mesma linha estética.${instrucao}`,
-    `🎨 **BRIEFING DE DESIGN (Versão ${versao + 1}) — ${tipo || 'Post'}**\n\n${identidadeBloco}\n\n---\n\n🖼️ **SUGESTÃO DE ARTE:**\nFormato: ${tipo || 'Post'} — Layout 2 colunas | Dimensão: ${dimensoes}\nLado esquerdo: Texto impactante sobre "${tituloSugerido}" com fundo nas cores da marca\nLado direito: Imagem profissional relacionada ao tema\nRodapé: Logo ${brand.nomeMarca} + @handle das redes\n\n📐 **Diretrizes Atualizadas:**\n• Paleta de cores: extraída do site ${brand.site || 'e perfis sociais'} da marca\n• Fontes: seguir o padrão tipográfico usado nas comunicações da ${brand.nomeMarca}\n• CTA visual no canto inferior direito\n• Elementos gráficos sutis conectando com o segmento (${brand.segmento || 'geral'})\n\n🎯 **Referência visual:** Usar como base a linguagem visual das redes (${redesList}).${instrucao}`,
-    `🎨 **BRIEFING DE DESIGN (Versão ${versao + 1}) — Carrossel ${tipo || 'Post'}**\n\n${identidadeBloco}\n\n---\n\n🖼️ **SUGESTÃO DE ARTE (Carrossel 4+ páginas):**\nDimensão por página: ${dimensoes}\n\n**Página 1 (Capa):** "${tituloSugerido}" em tipografia bold, cores da marca, logo ${brand.nomeMarca} discreto no topo\n**Página 2 (Conteúdo):** "${subtituloSugerido}" em destaque.\n**Páginas seguintes:** Continuar o roteiro de slides conforme a copy aprovada.\n**Última Página (CTA):** "Seu próximo passo começa aqui →", botão visual, @handle e link do site\n\n📐 **Diretrizes Atualizadas:**\n• Cores: seguir a paleta da marca conforme site (${brand.site || 'não informado'}) e redes\n• Transição visual suave entre páginas (manter a mesma família de cores)\n• Tipografia consistente com o branding da ${brand.nomeMarca}\n• Cada página deve funcionar isoladamente e em sequência\n\n🎯 **Referência visual:** Posts recentes nas redes (${redesList}).${instrucao}`
-  ];
-
-  const images = [
-    `/generated-arts/carousel_cover${suffix}.png?t=${timestamp}`,
-    `/generated-arts/carousel_data${suffix}.png?t=${timestamp}`,
-    `/generated-arts/carousel_cta${suffix}.png?t=${timestamp}`
-  ];
-
-  return { text: blocos[versao % blocos.length], images };
+  return {
+    text: JSON.stringify(
+      {
+        ...payload,
+        notes: notas,
+      },
+      null,
+      2
+    ),
+    payload,
+    images: [],
+  };
 }
 
 app.post('/api/contents/:id/generate', async (req, res) => {
@@ -383,20 +1420,21 @@ app.post('/api/contents/:id/advance', async (req, res) => {
     const antigos = toAgentResults(current.resultados_agentes);
 
     if (current_agent === 'Pesquisador') {
+      const copyPayload = buildCopyOutput(current.tema || 'Tema', current.objetivo_post || '', 0, antigos.pesquisa, observacao);
       const mockCopy = gerarCopy(current.tema || 'Tema', current.objetivo_post || '', 0, antigos.pesquisa, observacao);
       const content = await getPrisma().content.update({
         where: { id: contentId },
-        data: { agente_atual: 'Copywriter', texto_gerado: mockCopy, resultados_agentes: { ...antigos, copy: mockCopy, _retryCount: 0 } }
+        data: { agente_atual: 'Copywriter', texto_gerado: mockCopy, resultados_agentes: { ...antigos, copy: mockCopy, copy_payload: copyPayload, _retryCount: 0 } }
       });
       return res.json(content);
     }
 
     if (current_agent === 'Copywriter') {
       const brandData = await fetchBrandData(contentId);
-      const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', 0, brandData, observacao, current.texto_gerado || undefined);
+      const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', 0, brandData, observacao, current.texto_gerado || undefined, antigos.copy_payload);
       const content = await getPrisma().content.update({
         where: { id: contentId },
-        data: { agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_images: designResult.images, _retryCount: 0 } }
+        data: { agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_payload: designResult.payload, design_images: designResult.images, _retryCount: 0 } }
       });
       return res.json(content);
     }
@@ -436,20 +1474,21 @@ app.post('/api/contents/:id/retry', async (req, res) => {
     }
 
     if (agent === 'Copywriter') {
+      const copyPayload = buildCopyOutput(current.tema || 'Tema', current.objetivo_post || '', version, antigos.pesquisa, observacao);
       const copy = gerarCopy(current.tema || 'Tema', current.objetivo_post || '', version, antigos.pesquisa, observacao);
       const updated = await getPrisma().content.update({
         where: { id: contentId },
-        data: { status: 'EM_PRODUCAO', agente_atual: 'Copywriter', texto_gerado: copy, resultados_agentes: { ...antigos, copy, _retryCount: version } }
+        data: { status: 'EM_PRODUCAO', agente_atual: 'Copywriter', texto_gerado: copy, resultados_agentes: { ...antigos, copy, copy_payload: copyPayload, _retryCount: version } }
       });
       return res.json(updated);
     }
 
     if (agent === 'Designer') {
       const brandData = await fetchBrandData(contentId);
-      const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', version, brandData, observacao, antigos.copy || undefined);
+      const designResult = gerarDesign(current.tema || 'Tema', current.tipo_conteudo || '', version, brandData, observacao, antigos.copy || undefined, antigos.copy_payload);
       const updated = await getPrisma().content.update({
         where: { id: contentId },
-        data: { status: 'EM_PRODUCAO', agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_images: designResult.images, _retryCount: version } }
+        data: { status: 'EM_PRODUCAO', agente_atual: 'Designer', resultados_agentes: { ...antigos, design: designResult.text, design_payload: designResult.payload, design_images: designResult.images, _retryCount: version } }
       });
       return res.json(updated);
     }

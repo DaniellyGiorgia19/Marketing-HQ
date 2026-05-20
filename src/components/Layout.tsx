@@ -6,7 +6,7 @@ export function Layout() {
       <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-50">
         <div className="container mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <h1 className="text-xl font-bold tracking-tight text-primary">Marketing HQ</h1>
+            <h1 className="font-display text-xl font-bold tracking-tight text-primary">Marketing HQ</h1>
             <nav className="flex items-center gap-4 text-sm font-medium text-muted-foreground">
               <Link to="/" className="hover:text-primary transition-colors">Negócios</Link>
               <Link to="/brand" className="hover:text-primary transition-colors">Marca</Link>

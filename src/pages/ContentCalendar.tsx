@@ -7,12 +7,226 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 
 interface Campaign { id: string; nome: string }
+type CopySlide = {
+  index: number
+  role: "hook" | "insight" | "proof" | "cta"
+  text: string
+}
+
+type CopyPayload = {
+  tema: string
+  post_type: "carrossel" | "post_unico" | "capa_reels" | "story"
+  hook: string
+  slides: CopySlide[]
+  caption: string[]
+  hashtags: string[]
+  strategic_objective?: string
+  user_direction?: string
+}
+
+type DesignSlide = {
+  width: number
+  height: number
+  background: "primary" | "secondary" | "gradient"
+  title: string
+  subtitle?: string
+  alignment: "left" | "center"
+  elements: Array<"logo" | "divider" | "cta_button">
+}
+
+type DesignerPayload = {
+  template: string
+  style_preset: "bold" | "spotlight" | "kinetic"
+  layout_variant: "editorial" | "split" | "spotlight" | "stacked"
+  reference_mode?: boolean
+  reference_image_url?: string
+  reference_template_name?: string
+  theme: {
+    primary: string
+    secondary: string
+    accent: string
+    neutral: string
+    titleFont: string
+    bodyFont: string
+  }
+  slides_json: DesignSlide[]
+  html_templates: string[]
+  export: string[]
+  notes?: string[]
+}
+
+const DESIGNER_THEME_FALLBACK: DesignerPayload["theme"] = {
+  primary: "#161E1F",
+  secondary: "#EA5E0B",
+  accent: "#FFFFFF",
+  neutral: "#F8FAFC",
+  titleFont: "Sora",
+  bodyFont: "Inter",
+}
+
 interface Content {
   id: string; campaign_id: string; data: string; tipo_conteudo: string;
   tema: string; objetivo_post: string; status: string; agente_atual: string;
+  created_at?: string;
+  updated_at?: string;
   texto_gerado?: string;
-  resultados_agentes?: { pesquisa?: string; copy?: string; design?: string; design_images?: string[] };
+  resultados_agentes?: { pesquisa?: string; copy?: string; copy_payload?: CopyPayload; design?: string; design_payload?: DesignerPayload; design_images?: string[]; _retryCount?: number };
   campaign?: { nome: string }
+}
+
+function parseDesignerPayload(content: Content | null): DesignerPayload | null {
+  const normalizePayload = (payload: Partial<DesignerPayload> | null | undefined): DesignerPayload | null => {
+    if (!payload || !Array.isArray(payload.slides_json) || !Array.isArray(payload.html_templates) || !Array.isArray(payload.export)) {
+      return null
+    }
+
+    return {
+      template: payload.template || "carousel_educativo",
+      style_preset: payload.style_preset || "bold",
+      layout_variant: payload.layout_variant || "editorial",
+      reference_mode: payload.reference_mode,
+      reference_image_url: payload.reference_image_url,
+      reference_template_name: payload.reference_template_name,
+      theme: {
+        ...DESIGNER_THEME_FALLBACK,
+        ...(payload.theme || {}),
+      },
+      slides_json: payload.slides_json,
+      html_templates: payload.html_templates,
+      export: payload.export,
+      notes: payload.notes,
+    }
+  }
+
+  const payload = normalizePayload(content?.resultados_agentes?.design_payload)
+  if (payload) return payload
+
+  const raw = content?.resultados_agentes?.design
+  if (!raw) return null
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<DesignerPayload>
+    return normalizePayload(parsed)
+  } catch {
+    return null
+  }
+}
+
+function parseCopyPayload(content: Content | null): CopyPayload | null {
+  const payload = content?.resultados_agentes?.copy_payload
+  if (!payload || !Array.isArray(payload.slides) || !Array.isArray(payload.caption) || !Array.isArray(payload.hashtags)) {
+    return null
+  }
+
+  return {
+    tema: payload.tema,
+    post_type: payload.post_type || "carrossel",
+    hook: payload.hook,
+    slides: payload.slides,
+    caption: payload.caption,
+    hashtags: payload.hashtags,
+    strategic_objective: payload.strategic_objective,
+    user_direction: payload.user_direction,
+  }
+}
+
+function buildPreviewBackground(background: DesignSlide["background"], payload: DesignerPayload) {
+  if (background === "gradient") {
+    return `linear-gradient(135deg, ${payload.theme.primary} 0%, ${payload.theme.secondary} 100%)`
+  }
+
+  return background === "secondary" ? payload.theme.secondary : payload.theme.primary
+}
+
+function SlidePreview({ slide, index, payload }: { slide: DesignSlide; index: number; payload: DesignerPayload }) {
+  const alignItems = slide.alignment === "center" ? "items-center text-center" : "items-start text-left"
+  const panelStyle = {
+    background: slide.background === "secondary" ? "rgba(15,23,42,0.22)" : "rgba(255,255,255,0.12)",
+    borderColor: "rgba(255,255,255,0.18)",
+  }
+  const isList = payload.template === "carousel_lista"
+  const isStory = payload.template === "carousel_storytelling"
+  const isAuthority = payload.template === "carousel_autoridade"
+  const isSplit = payload.layout_variant === "split"
+  const isSpotlightLayout = payload.layout_variant === "spotlight"
+  const isStacked = payload.layout_variant === "stacked"
+
+  return (
+    <div className="space-y-2">
+      <div
+        className={`relative flex aspect-[4/5] w-full flex-col justify-between overflow-hidden rounded-xl p-6 shadow-sm ${alignItems}`}
+        style={{ background: buildPreviewBackground(slide.background, payload), color: "#F8FAFC" }}
+      >
+        <div className="pointer-events-none absolute inset-0 overflow-hidden">
+          {payload.style_preset === "kinetic" && (
+            <>
+              <div className="absolute -right-10 -top-10 h-40 w-40 rotate-12 rounded-[2rem] opacity-90" style={{ background: payload.theme.secondary }} />
+              <div className="absolute -left-10 bottom-16 h-32 w-32 rounded-full opacity-20" style={{ background: payload.theme.accent }} />
+            </>
+          )}
+          {payload.style_preset === "spotlight" && (
+            <div className="absolute right-10 top-10 h-40 w-40 rounded-full opacity-40 blur-2xl" style={{ background: payload.theme.accent }} />
+          )}
+          {payload.style_preset === "bold" && (
+            <div className="absolute inset-5 rounded-[1.75rem] border" style={{ borderColor: "rgba(255,255,255,0.18)" }} />
+          )}
+        </div>
+        <div className={`relative flex w-full ${isSplit || (isList && slide.alignment === "left") ? "gap-4" : ""}`}>
+          <div className={`flex flex-1 flex-col gap-4 ${isSpotlightLayout ? "items-center text-center" : alignItems} ${isStacked ? "justify-end" : ""}`}>
+            <div className={`flex w-full ${slide.alignment === "center" ? "justify-center" : "justify-start"}`}>
+              <span className="inline-flex rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-white/90" style={panelStyle}>
+                {payload.template.replace("carousel_", "").replace("_", " ")}
+              </span>
+            </div>
+            {slide.elements.includes("divider") && (
+              <div className="h-1.5 w-24 rounded-full bg-white/90" />
+            )}
+            <div
+              className={`${isStory || isSpotlightLayout || isStacked ? "rounded-[1.5rem] border p-4" : ""} ${isStacked ? "mt-auto" : ""}`}
+              style={isStory || isSpotlightLayout || isStacked ? panelStyle : undefined}
+            >
+              <h3 className="max-w-[90%] text-2xl font-black leading-[0.95] tracking-tight">
+                {slide.title}
+              </h3>
+              {slide.subtitle && (
+                <p className="mt-3 max-w-[90%] text-sm leading-relaxed text-white/90">
+                  {slide.subtitle}
+                </p>
+              )}
+            </div>
+          </div>
+          {(isSplit || (isList && slide.alignment === "left")) && (
+            <div className="hidden w-24 shrink-0 rounded-[1.5rem] border p-3 md:flex md:flex-col md:justify-between" style={panelStyle}>
+              <div className={`h-16 overflow-hidden rounded-xl ${isSplit ? "block" : "hidden"}`} style={{ background: "rgba(255,255,255,0.10)" }}>
+                {payload.reference_mode && payload.reference_image_url ? (
+                  <img src={payload.reference_image_url} alt="Referência visual" className="h-full w-full object-cover" />
+                ) : null}
+              </div>
+              <span className="text-3xl font-black leading-none">0{index + 1}</span>
+              <span className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/70">passo</span>
+            </div>
+          )}
+        </div>
+        <div className={`relative flex w-full flex-wrap items-center gap-3 ${slide.alignment === "center" ? "justify-center" : "justify-between"}`}>
+          {slide.elements.includes("cta_button") ? (
+            <div className="rounded-full px-4 py-2 text-xs font-extrabold uppercase tracking-wide text-slate-900" style={{ background: payload.theme.accent }}>
+              CTA
+            </div>
+          ) : (
+            <div />
+          )}
+          {slide.elements.includes("logo") && (
+            <div className="text-[11px] font-bold uppercase tracking-[0.2em] text-white/80">
+              {isAuthority ? "assinatura" : "logo"}
+            </div>
+          )}
+        </div>
+      </div>
+      <p className="text-xs text-slate-500">
+        {slide.width}x{slide.height} • {slide.background} • {slide.alignment} • {payload.style_preset}
+      </p>
+    </div>
+  )
 }
 
 const TIPOS = ["Reels", "Carrossel", "Post Estático", "Stories", "Vídeo Longo", "Artigo Blog", "E-mail"]
@@ -24,6 +238,31 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   PUBLICADO: { label: "Publicado", color: "bg-purple-100 text-purple-700 border-purple-200" },
 }
 
+const WORKFLOW_STEPS = [
+  { key: "pesquisa", label: "Pesquisa", agent: "Pesquisador" },
+  { key: "copy", label: "Copy", agent: "Copywriter" },
+  { key: "design", label: "Direcao Visual", agent: "Designer" },
+] as const
+
+const DESIGN_TEMPLATE_OPTIONS = [
+  { value: "carousel_educativo", label: "Educativo" },
+  { value: "carousel_autoridade", label: "Autoridade" },
+  { value: "carousel_lista", label: "Lista" },
+  { value: "carousel_storytelling", label: "Storytelling" },
+  { value: "post_piramide_ia", label: "Pirâmide IA" },
+] as const
+
+const DESIGN_STYLE_OPTIONS = [
+  { value: "bold", label: "Bold" },
+  { value: "spotlight", label: "Elegante" },
+  { value: "kinetic", label: "Dinâmico" },
+] as const
+
+const DESIGN_ALIGNMENT_OPTIONS = [
+  { value: "left", label: "Esquerda" },
+  { value: "center", label: "Centro" },
+] as const
+
 export default function ContentCalendar() {
   const [searchParams] = useSearchParams()
   const initialCampaignId = searchParams.get("campaignId")
@@ -31,10 +270,16 @@ export default function ContentCalendar() {
   const [activeCampaignId, setActiveCampaignId] = useState("")
   const [contents, setContents] = useState<Content[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadedCampaignId, setLoadedCampaignId] = useState<string | null>(null)
   const [isOpen, setIsOpen] = useState(false)
   const [reviewItem, setReviewItem] = useState<Content | null>(null)
   const [activeTab, setActiveTab] = useState<"pesquisa"|"copy"|"design">("pesquisa")
   const [observation, setObservation] = useState("")
+  const [designTemplate, setDesignTemplate] = useState<DesignerPayload["template"]>("carousel_educativo")
+  const [designStylePreset, setDesignStylePreset] = useState<DesignerPayload["style_preset"]>("bold")
+  const [designAlignment, setDesignAlignment] = useState<DesignSlide["alignment"]>("left")
+  const [designReferenceImageUrl, setDesignReferenceImageUrl] = useState("")
+  const [designReferenceNotes, setDesignReferenceNotes] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
   const [formData, setFormData] = useState({ data: "", tipo_conteudo: "Carrossel", tema: "", objetivo_post: "" })
 
@@ -50,25 +295,49 @@ export default function ContentCalendar() {
     })
   }, [initialCampaignId])
 
-  const refreshContents = useCallback(async (campaignId: string, reviewId?: string | null) => {
+  const refreshContents = useCallback(async (
+    campaignId: string,
+    reviewId?: string | null,
+    options?: { silent?: boolean }
+  ) => {
     if (!campaignId) return
 
-    setLoading(true)
+    const silent = options?.silent ?? false
+    const shouldShowLoading = !silent && loadedCampaignId !== campaignId
+
+    if (shouldShowLoading) {
+      setLoading(true)
+    }
+
     try {
       const response = await fetch(`/api/contents?campaign_id=${campaignId}`)
       const data = await response.json()
       const list = Array.isArray(data) ? data : []
 
-      setContents(list)
+      setContents(previousContents => {
+        const hasSameData = JSON.stringify(previousContents) === JSON.stringify(list)
+        return hasSameData ? previousContents : list
+      })
+      setLoadedCampaignId(campaignId)
 
       if (reviewId) {
         const updated = list.find((content: Content) => content.id === reviewId)
         setReviewItem(updated || null)
       }
     } finally {
-      setLoading(false)
+      if (shouldShowLoading) {
+        setLoading(false)
+      }
     }
-  }, [])
+  }, [loadedCampaignId])
+
+  useEffect(() => {
+    if (!activeCampaignId) return
+
+    if (loadedCampaignId !== activeCampaignId) {
+      setLoading(true)
+    }
+  }, [activeCampaignId, loadedCampaignId])
 
   useEffect(() => { 
     void refreshContents(activeCampaignId, reviewItem?.id);
@@ -78,12 +347,25 @@ export default function ContentCalendar() {
       // Pause polling while a mutation is in progress to prevent UI jumping/overwriting
       if (!activeCampaignId || isProcessing) return;
 
-      void refreshContents(activeCampaignId, reviewItem?.id)
+      void refreshContents(activeCampaignId, reviewItem?.id, { silent: true })
         .catch(err => console.error("Polling error:", err)); // Silently handle polling errors
     }, 2000);
     
     return () => clearInterval(interval);
   }, [activeCampaignId, isProcessing, refreshContents, reviewItem?.id])
+
+  useEffect(() => {
+    const payload = parseDesignerPayload(reviewItem)
+    if (!payload) {
+      setDesignReferenceImageUrl("")
+      return
+    }
+
+    setDesignTemplate(payload.template)
+    setDesignStylePreset(payload.style_preset)
+    setDesignAlignment(payload.slides_json[0]?.alignment || "left")
+    setDesignReferenceImageUrl(payload.reference_image_url || "")
+  }, [reviewItem])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -119,6 +401,52 @@ export default function ContentCalendar() {
 
   const agentToTab: Record<string, "pesquisa"|"copy"|"design"> = { 'Pesquisador': 'pesquisa', 'Copywriter': 'copy', 'Designer': 'design' };
 
+  const getStepState = (stepKey: "pesquisa" | "copy" | "design") => {
+    if (!reviewItem) return "pending"
+
+    const results = reviewItem.resultados_agentes
+    const designPayload = parseDesignerPayload(reviewItem)
+    const isDone =
+      (stepKey === "pesquisa" && Boolean(results?.pesquisa)) ||
+      (stepKey === "copy" && Boolean(results?.copy || reviewItem.texto_gerado)) ||
+      (stepKey === "design" && Boolean(results?.design || designPayload?.slides_json?.length || results?.design_images?.length))
+
+    if (stepKey === activeTab && isProcessing) return "active"
+    if (stepKey === activeTab && reviewItem.status !== "APROVADO" && reviewItem.status !== "PUBLICADO") return "active"
+    if (isDone) return "done"
+    return "pending"
+  }
+
+  const completedStepsCount = reviewItem
+    ? WORKFLOW_STEPS.filter(step => getStepState(step.key) === "done").length
+    : 0
+
+  const progressValue = Math.round((completedStepsCount / WORKFLOW_STEPS.length) * 100)
+
+  const getStepTimestampLabel = (stepKey: "pesquisa" | "copy" | "design") => {
+    if (!reviewItem?.updated_at) return null
+    if (getStepState(stepKey) === "pending") return null
+    return new Date(reviewItem.updated_at).toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit"
+    })
+  }
+
+  const buildObservationPayload = () => {
+    if (activeTab !== "design") return observation
+
+    const directives = [
+      `template ${designTemplate}`,
+      `estilo ${designStylePreset}`,
+      `alinhamento ${designAlignment === "center" ? "central" : "esquerda"}`,
+      designReferenceImageUrl.trim() ? `imagem_referencia ${designReferenceImageUrl.trim()}` : "",
+      designReferenceNotes.trim() ? `referencia_visual ${designReferenceNotes.trim()}` : "",
+      observation.trim(),
+    ].filter(Boolean)
+
+    return directives.join(". ")
+  }
+
   const handleAdvance = async () => {
     if (!reviewItem) return
     setIsProcessing(true)
@@ -131,7 +459,7 @@ export default function ContentCalendar() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           current_agent: currentAgent, 
-          observacao: observation 
+          observacao: buildObservationPayload()
         })
       })
       if (!res.ok) throw new Error("Falha ao avançar")
@@ -161,7 +489,7 @@ export default function ContentCalendar() {
       const res = await fetch(`/api/contents/${reviewItem.id}/retry`, { 
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ observacao: observation, target_agent: targetAgent })
+        body: JSON.stringify({ observacao: buildObservationPayload(), target_agent: targetAgent })
       })
       if (!res.ok) throw new Error("Falha ao refazer")
       const updated = await res.json()
@@ -183,7 +511,13 @@ export default function ContentCalendar() {
       
       {/* Review Dialog */}
       <Dialog open={!!reviewItem} onOpenChange={(o) => {
-        if(!o) { setReviewItem(null); setObservation(""); setActiveTab("pesquisa"); }
+        if(!o) {
+          setReviewItem(null);
+          setObservation("");
+          setActiveTab("pesquisa");
+          setDesignReferenceImageUrl("");
+          setDesignReferenceNotes("");
+        }
       }}>
         <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
           <DialogHeader>
@@ -191,6 +525,58 @@ export default function ContentCalendar() {
             <DialogDescription>Acompanhe o progresso da IA ou revise o conteúdo finalizado.</DialogDescription>
           </DialogHeader>
           <div className="py-2 space-y-4 overflow-y-auto flex-1">
+            <div className="rounded-xl border bg-slate-50 p-4">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Progresso do fluxo</p>
+                  <p className="text-xs text-slate-500">Acompanhe a evolução entre pesquisa, copy e design.</p>
+                </div>
+                <span className="text-sm font-bold text-slate-700">{progressValue}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all duration-500"
+                  style={{ width: `${progressValue}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {WORKFLOW_STEPS.map((step, index) => {
+                const stepState = getStepState(step.key)
+                const timeLabel = getStepTimestampLabel(step.key)
+                const style =
+                  stepState === "done"
+                    ? "border-green-200 bg-green-50 text-green-700"
+                    : stepState === "active"
+                      ? "border-blue-200 bg-blue-50 text-blue-700"
+                      : "border-slate-200 bg-slate-50 text-slate-500"
+                const badge =
+                  stepState === "done"
+                    ? "Concluido"
+                    : stepState === "active"
+                      ? (isProcessing ? "Processando" : "Atual")
+                      : "Pendente"
+
+                return (
+                  <div key={step.key} className={`rounded-lg border p-3 ${style}`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide">Etapa {index + 1}</p>
+                        <p className="text-sm font-bold">{step.label}</p>
+                        <p className="text-xs opacity-80">{step.agent}</p>
+                        {timeLabel && (
+                          <p className="mt-1 text-[11px] opacity-70">Atualizado às {timeLabel}</p>
+                        )}
+                      </div>
+                      <span className="rounded-full border border-current/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide">
+                        {badge}
+                      </span>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
             
             <div className="flex border-b">
               <button 
@@ -209,7 +595,7 @@ export default function ContentCalendar() {
                 className={`px-4 py-2 text-sm font-medium ${activeTab === 'design' ? 'border-b-2 border-primary text-primary' : 'text-muted-foreground'}`}
                 onClick={() => setActiveTab('design')}
               >
-                3. Design
+                3. Direcao Visual
               </button>
             </div>
 
@@ -219,10 +605,48 @@ export default function ContentCalendar() {
                )}
                {activeTab === 'copy' && (() => {
                  const copyText = reviewItem?.resultados_agentes?.copy || reviewItem?.texto_gerado || "";
+                 const copyPayload = parseCopyPayload(reviewItem);
                  if (!copyText) return <div className="text-muted-foreground">Aguardando agente Copywriter...</div>;
                  const sections = copyText.split('---').map((s: string) => s.trim()).filter(Boolean);
                  return (
                    <div className="space-y-4">
+                     {copyPayload && (
+                       <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-4">
+                         <div className="flex flex-wrap items-center gap-2">
+                           <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                             Formato: {copyPayload.post_type.replace("_", " ")}
+                           </span>
+                           <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                             Hook: {copyPayload.hook}
+                           </span>
+                         </div>
+                         <div className="grid gap-3 md:grid-cols-2">
+                           {copyPayload.slides.map((slide) => (
+                             <div key={slide.index} className="rounded-lg border border-slate-200 bg-white p-4">
+                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                 Slide {slide.index} • {slide.role}
+                               </p>
+                               <p className="mt-2 text-sm font-medium text-slate-900">{slide.text}</p>
+                             </div>
+                           ))}
+                         </div>
+                         <div className="rounded-lg border border-slate-200 bg-white p-4">
+                           <p className="text-sm font-semibold text-slate-800">Legenda estruturada</p>
+                           <div className="mt-2 space-y-2 text-sm text-slate-700">
+                             {copyPayload.caption.map((paragraph, index) => (
+                               <p key={index}>{paragraph}</p>
+                             ))}
+                           </div>
+                         </div>
+                         <div className="flex flex-wrap gap-2">
+                           {copyPayload.hashtags.map((tag) => (
+                             <span key={tag} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
+                               {tag}
+                             </span>
+                           ))}
+                         </div>
+                       </div>
+                     )}
                      {sections.map((section: string, i: number) => {
                        const isArte = section.includes('TEXTO DA ARTE');
                        const isLegenda = section.includes('LEGENDA');
@@ -245,36 +669,168 @@ export default function ContentCalendar() {
                })()}
                {activeTab === 'design' && (() => {
                  const designText = reviewItem?.resultados_agentes?.design || "";
-                 const designImages = reviewItem?.resultados_agentes?.design_images || [];
-                 if (!designText && designImages.length === 0) return <div className="text-muted-foreground">Aguardando agente Designer...</div>;
-                 const sections = designText ? designText.split('---').map((s: string) => s.trim()).filter(Boolean) : [];
+                 const designPayload = parseDesignerPayload(reviewItem);
+                 const designVersion = (reviewItem?.resultados_agentes?._retryCount || 0) + 1;
+                 if (!designText && !designPayload) return <div className="text-muted-foreground">Aguardando agente Designer...</div>;
                  return (
                    <div className="space-y-4">
-                     {sections.map((section: string, i: number) => {
-                       const isIdentidade = section.includes('IDENTIDADE VISUAL');
-                       const isSugestao = section.includes('SUGESTÃO DE ARTE');
-                       const bgClass = isIdentidade 
-                         ? 'bg-amber-50 border-amber-200' 
-                         : isSugestao
-                           ? 'bg-emerald-50 border-emerald-200'
-                           : 'bg-white border-slate-200';
-                       return (
-                         <div key={i} className={`p-4 rounded-lg border ${bgClass} whitespace-pre-wrap`}>
-                           {section}
+                     <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                       <div>
+                         <p className="text-sm font-semibold text-slate-800">Versao da estrutura visual</p>
+                         <p className="text-xs text-slate-500">Cada refacao atualiza o pacote do Designer pronto para renderizacao via Satori.</p>
+                       </div>
+                       <span className="rounded-full border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
+                         V{designVersion}
+                       </span>
+                     </div>
+                     {designPayload && (
+                       <>
+                         <div className="rounded-lg border border-slate-200 bg-white p-4">
+                           <div className="flex flex-wrap items-center gap-2">
+                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                               Template: {DESIGN_TEMPLATE_OPTIONS.find(option => option.value === designPayload.template)?.label || designPayload.template}
+                             </span>
+                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                               Estilo: {DESIGN_STYLE_OPTIONS.find(option => option.value === designPayload.style_preset)?.label || designPayload.style_preset}
+                             </span>
+                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                               Layout: {designPayload.layout_variant}
+                             </span>
+                             {designPayload.reference_mode && (
+                               <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                                 Referência visual ativa
+                               </span>
+                             )}
+                             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                               Alinhamento: {designPayload.slides_json[0]?.alignment === "center" ? "Centro" : "Esquerda"}
+                             </span>
+                           </div>
                          </div>
-                       );
-                     })}
-                     {designImages.length > 0 && (
-                       <div className="space-y-3">
-                         <p className="text-sm font-semibold text-slate-700">🖼️ Prévia das Artes Geradas (4:5 — 1080x1350px):</p>
-                         <div className="grid grid-cols-3 gap-3">
-                           {designImages.map((img: string, i: number) => (
-                             <div key={i} className="border rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                               <img src={img} alt={`Arte ${i + 1}`} className="w-full h-auto" />
-                               <p className="text-xs text-center text-muted-foreground py-1">Página {i + 1}</p>
+                         {designPayload.notes && designPayload.notes.length > 0 && (
+                           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                             <p className="text-sm font-semibold text-amber-900">Notas do Designer</p>
+                             <div className="mt-2 space-y-1 text-sm text-amber-950">
+                               {designPayload.notes.map((note, index) => (
+                                 <p key={index}>{note}</p>
+                               ))}
                              </div>
-                           ))}
+                           </div>
+                         )}
+                         <div className="space-y-3">
+                           <p className="text-sm font-semibold text-slate-700">Previa visual dos slides</p>
+                           <div className="grid gap-3 md:grid-cols-2">
+                             {designPayload.slides_json.map((slide, index) => (
+                               <SlidePreview key={index} slide={slide} index={index} payload={designPayload} />
+                             ))}
+                           </div>
                          </div>
+                         <details className="rounded-lg border border-slate-200 bg-white p-4">
+                           <summary className="cursor-pointer text-sm font-semibold text-slate-700">
+                             Ver estrutura tecnica para Satori
+                           </summary>
+                           <div className="mt-4 space-y-4">
+                             <div className="space-y-3">
+                               <p className="text-sm font-semibold text-slate-700">Slides estruturados</p>
+                               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                                 <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-slate-800">
+                                   {JSON.stringify(designPayload.slides_json, null, 2)}
+                                 </pre>
+                               </div>
+                             </div>
+                             <div className="space-y-3">
+                               <p className="text-sm font-semibold text-slate-700">HTML/CSS para Satori</p>
+                               <div className="space-y-3">
+                                 {designPayload.html_templates.map((template, index) => (
+                                   <div key={index} className="rounded-lg border border-slate-200 bg-slate-950 p-4">
+                                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">Slide {index + 1}</p>
+                                     <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-slate-100">{template}</pre>
+                                   </div>
+                                 ))}
+                               </div>
+                             </div>
+                           </div>
+                         </details>
+                         <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
+                           <p className="text-sm font-semibold text-emerald-900">Export planejado</p>
+                           <p className="mt-2 text-sm text-emerald-950">{designPayload.export.join(", ")}</p>
+                         </div>
+                         <div className="rounded-lg border border-slate-200 bg-white p-4 space-y-4">
+                           <div>
+                             <p className="text-sm font-semibold text-slate-800">Editor de Template</p>
+                             <p className="text-xs text-slate-500">Escolha a estrutura visual antes de atualizar a etapa.</p>
+                           </div>
+                           <div className="grid gap-4 md:grid-cols-3">
+                             <div className="space-y-2">
+                               <Label>Template</Label>
+                               <select
+                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                 value={designTemplate}
+                                 onChange={(e) => setDesignTemplate(e.target.value as DesignerPayload["template"])}
+                               >
+                                 {DESIGN_TEMPLATE_OPTIONS.map(option => (
+                                   <option key={option.value} value={option.value}>{option.label}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             <div className="space-y-2">
+                               <Label>Estilo</Label>
+                               <select
+                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                 value={designStylePreset}
+                                 onChange={(e) => setDesignStylePreset(e.target.value as DesignerPayload["style_preset"])}
+                               >
+                                 {DESIGN_STYLE_OPTIONS.map(option => (
+                                   <option key={option.value} value={option.value}>{option.label}</option>
+                                 ))}
+                               </select>
+                             </div>
+                             <div className="space-y-2">
+                               <Label>Alinhamento</Label>
+                               <select
+                                 className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                 value={designAlignment}
+                                 onChange={(e) => setDesignAlignment(e.target.value as DesignSlide["alignment"])}
+                               >
+                                 {DESIGN_ALIGNMENT_OPTIONS.map(option => (
+                                   <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                               </select>
+                             </div>
+                           </div>
+                           <div className="grid gap-4 md:grid-cols-2">
+                             <div className="space-y-2">
+                               <Label>Imagem de referência</Label>
+                               <Input
+                                 placeholder="https://site.com/referencia.jpg"
+                                 value={designReferenceImageUrl}
+                                 onChange={(e) => setDesignReferenceImageUrl(e.target.value)}
+                               />
+                               <p className="text-xs text-slate-500">Cole a URL de uma imagem ou screenshot do site para guiar o HTML do template.</p>
+                             </div>
+                             <div className="space-y-2">
+                               <Label>Leitura visual da referência</Label>
+                               <textarea
+                                 className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                 placeholder="Ex: hero com imagem lateral, cards minimalistas, muito espaço em branco..."
+                                 value={designReferenceNotes}
+                                 onChange={(e) => setDesignReferenceNotes(e.target.value)}
+                               />
+                             </div>
+                           </div>
+                           {designReferenceImageUrl.trim() && (
+                             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                               <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Prévia da referência</p>
+                               <div className="mt-2 overflow-hidden rounded-lg border border-slate-200 bg-white">
+                                 <img src={designReferenceImageUrl} alt="Referência visual do template" className="max-h-56 w-full object-cover" />
+                               </div>
+                             </div>
+                           )}
+                         </div>
+                       </>
+                     )}
+                     {!designPayload && designText && (
+                       <div className="rounded-lg border border-slate-200 bg-white p-4 whitespace-pre-wrap">
+                         {designText}
                        </div>
                      )}
                    </div>
@@ -295,7 +851,7 @@ export default function ContentCalendar() {
                 <div className="space-y-2 mt-4">
                   <Label>
                     {reviewItem?.agente_atual === 'Designer' 
-                      ? '✏️ Solicitar ajustes no design (cores, layout, elementos...)' 
+                      ? '✏️ Solicitar ajustes na direcao visual (cores, layout, elementos...)' 
                       : 'Observação para os próximos passos (Opcional)'}
                   </Label>
                   <textarea 
@@ -316,7 +872,7 @@ export default function ContentCalendar() {
                       {isProcessing ? (
                         <><span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></span> Processando...</>
                       ) : (
-                        <>📩 Enviar Observação e Refazer Etapa</>
+                        <>📩 Atualizar Briefing Visual</>
                       )}
                     </Button>
                   )}
@@ -339,7 +895,7 @@ export default function ContentCalendar() {
               <>
                 <Button variant="outline" onClick={handleRetry} disabled={isProcessing}>
                   {isProcessing ? <span className="h-4 w-4 rounded-full border-2 border-primary/20 border-t-primary animate-spin mr-1"></span> : "🔄 "}
-                  Refazer Etapa
+                  Atualizar Etapa
                 </Button>
                 <Button variant="outline" onClick={() => { setReviewItem(null); setObservation(""); }} disabled={isProcessing}>Fechar</Button>
                 
