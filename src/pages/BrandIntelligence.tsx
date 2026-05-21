@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { ImagePlus, Layers, Megaphone, Palette, Sparkles, Type, Upload, Wand2, X } from "lucide-react"
+import { Download, FileText, Image as ImageIcon, Plus, RefreshCw, Sparkles, Wand2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -51,12 +51,6 @@ interface UploadedFont {
   previewUrl: string;
 }
 
-interface ReferenceImage {
-  id: string;
-  name: string;
-  previewUrl: string;
-}
-
 interface DesignRequest {
   id: string;
   type: string;
@@ -64,6 +58,32 @@ interface DesignRequest {
   objective: string;
   prompt: string;
   title: string;
+  attachments: string[];
+}
+
+interface CreationAttachment {
+  id: string;
+  name: string;
+  type: "image" | "document";
+}
+
+interface ChatMessage {
+  id: string;
+  role: "assistant" | "user";
+  text: string;
+  attachments?: string[];
+}
+
+interface GeneratedDesign {
+  id: string;
+  title: string;
+  type: string;
+  format: string;
+  prompt: string;
+  createdAt: string;
+  primaryColor: string;
+  accentColor: string;
+  attachments: string[];
 }
 
 const DEFAULT_VISUAL_DIRECTION: VisualDirection = {
@@ -252,14 +272,6 @@ function createUploadedFont(file: File): UploadedFont {
   }
 }
 
-function createReferenceImage(file: File): ReferenceImage {
-  return {
-    id: `${file.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    name: file.name,
-    previewUrl: URL.createObjectURL(file),
-  }
-}
-
 interface Business {
   id: string;
   nome_marca: string;
@@ -279,29 +291,33 @@ export default function BrandIntelligence() {
   const [brandProfile, setBrandProfile] = useState<BrandProfile | null>(null)
   const [visualDirection, setVisualDirection] = useState<VisualDirection>(DEFAULT_VISUAL_DIRECTION)
   const [uploadedFonts, setUploadedFonts] = useState<UploadedFont[]>([])
-  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([])
-  const [designerPrompt, setDesignerPrompt] = useState(
-    "Crie um post de Instagram com cara de campanha premium, usando minha paleta, minhas fontes e uma hierarquia visual forte para gerar desejo e conversao."
-  )
+  const [designerPrompt, setDesignerPrompt] = useState("")
   const [requestType, setRequestType] = useState<string>("Post estatico")
   const [requestFormat, setRequestFormat] = useState<string>("Feed 4:5")
-  const [designRequests, setDesignRequests] = useState<DesignRequest[]>([])
-  const [activeRequestId, setActiveRequestId] = useState("")
-  const [studioPostTitle, setStudioPostTitle] = useState("Campanha que para o scroll")
+  const [currentDesignRequest, setCurrentDesignRequest] = useState<DesignRequest | null>(null)
+  const [generatedDesigns, setGeneratedDesigns] = useState<GeneratedDesign[]>([])
+  const [activeGeneratedDesignId, setActiveGeneratedDesignId] = useState("")
+  const [creationAttachments, setCreationAttachments] = useState<CreationAttachment[]>([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    {
+      id: "designer-welcome",
+      role: "assistant",
+      text: "Me diga quais peças você quer criar, para qual objetivo e qualquer referência que eu devo considerar.",
+    },
+  ])
   const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false)
   const [isEditingSaved, setIsEditingSaved] = useState(false)
   const registeredFontFacesRef = useRef<FontFace[]>([])
   const uploadedFontsRef = useRef<UploadedFont[]>([])
-  const referenceImagesRef = useRef<ReferenceImage[]>([])
 
   const activeBusiness = useMemo(
     () => businesses.find(business => business.id === activeBusinessId),
     [activeBusinessId, businesses]
   )
 
-  const activeRequest = useMemo(
-    () => designRequests.find(request => request.id === activeRequestId) || designRequests[0],
-    [activeRequestId, designRequests]
+  const activeGeneratedDesign = useMemo(
+    () => generatedDesigns.find(design => design.id === activeGeneratedDesignId) || generatedDesigns[0],
+    [activeGeneratedDesignId, generatedDesigns]
   )
 
   const persistedFonts = useMemo(() => {
@@ -384,21 +400,6 @@ export default function BrandIntelligence() {
     objective: "",
   })
 
-  const handleSocialLinkChange = (index: number, value: string) => {
-    const newLinks = [...formData.socialLinks];
-    newLinks[index] = value;
-    setFormData({ ...formData, socialLinks: newLinks });
-  }
-
-  const addSocialLink = () => {
-    setFormData({ ...formData, socialLinks: [...formData.socialLinks, ""] });
-  }
-
-  const removeSocialLink = (index: number) => {
-    const newLinks = formData.socialLinks.filter((_, i) => i !== index);
-    setFormData({ ...formData, socialLinks: newLinks });
-  }
-
   const updatePaletteColor = (index: number, value: string) => {
     const nextPalette = [...visualDirection.palette]
     const normalizedValue = value.startsWith("#") ? value.toUpperCase() : `#${value.toUpperCase()}`
@@ -455,31 +456,23 @@ export default function BrandIntelligence() {
     }
   }
 
-  const handleReferenceImagesAdd = (files: FileList | null) => {
+  const handleCreationAttachmentsAdd = (files: FileList | null) => {
     if (!files || files.length === 0) return
-    const nextImages = Array.from(files)
-      .filter(file => file.type.startsWith("image/"))
-      .map(createReferenceImage)
 
-    if (nextImages.length === 0) return
-    setReferenceImages(previous => [...previous, ...nextImages])
+    const nextAttachments = Array.from(files).map(file => ({
+      id: `${file.name.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: file.name,
+      type: file.type.startsWith("image/") ? "image" as const : "document" as const,
+    }))
+
+    setCreationAttachments(previous => [...previous, ...nextAttachments])
   }
 
-  const removeReferenceImage = (imageId: string) => {
-    setReferenceImages(previous => {
-      const targetImage = previous.find(image => image.id === imageId)
-      if (targetImage) URL.revokeObjectURL(targetImage.previewUrl)
-      return previous.filter(image => image.id !== imageId)
-    })
+  const removeCreationAttachment = (attachmentId: string) => {
+    setCreationAttachments(previous => previous.filter(attachment => attachment.id !== attachmentId))
   }
 
-  const handleAddDesignRequest = () => {
-    const prompt = designerPrompt.trim()
-    if (!prompt) {
-      alert("Escreva o prompt da peça primeiro.")
-      return false
-    }
-
+  const addDesignRequestFromPrompt = (prompt: string) => {
     const request: DesignRequest = {
       id: `design-request-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: requestType,
@@ -487,12 +480,40 @@ export default function BrandIntelligence() {
       objective: formData.objective.trim() || "Campanha de conversao",
       prompt,
       title: buildRequestTitle(prompt, requestType),
+      attachments: creationAttachments.map(attachment => attachment.name),
     }
 
-    setDesignRequests(previous => [request, ...previous])
-    setActiveRequestId(request.id)
-    setStudioPostTitle(request.title)
-    return true
+    setCurrentDesignRequest(request)
+    return request
+  }
+
+  const handleSendDesignerMessage = () => {
+    const prompt = designerPrompt.trim()
+    if (!prompt) {
+      alert("Escreva o prompt da peça primeiro.")
+      return null
+    }
+
+    const request = addDesignRequestFromPrompt(prompt)
+    const attachmentNames = creationAttachments.map(attachment => attachment.name)
+
+    setChatMessages(previous => [
+      ...previous,
+      {
+        id: `user-message-${request.id}`,
+        role: "user",
+        text: prompt,
+        attachments: attachmentNames,
+      },
+      {
+        id: `assistant-message-${request.id}`,
+        role: "assistant",
+        text: `Perfeito. Vou preparar ${request.type.toLowerCase()} no formato ${request.format}${request.objective ? ` com foco em ${request.objective}` : ""}.`,
+      },
+    ])
+    setDesignerPrompt("")
+    setCreationAttachments([])
+    return request
   }
 
   const removeUploadedFont = (fontId: string) => {
@@ -559,10 +580,6 @@ export default function BrandIntelligence() {
   }, [uploadedFonts])
 
   useEffect(() => {
-    referenceImagesRef.current = referenceImages
-  }, [referenceImages])
-
-  useEffect(() => {
     const nextFontFaces: FontFace[] = []
 
     async function loadUploadedFonts() {
@@ -597,7 +614,6 @@ export default function BrandIntelligence() {
   useEffect(() => {
     return () => {
       uploadedFontsRef.current.forEach(font => URL.revokeObjectURL(font.previewUrl))
-      referenceImagesRef.current.forEach(image => URL.revokeObjectURL(image.previewUrl))
     }
   }, [])
 
@@ -621,83 +637,111 @@ export default function BrandIntelligence() {
       })
   }, [initialBusinessId])
 
+  const createGeneratedDesign = (request: DesignRequest): GeneratedDesign => ({
+    id: `generated-design-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    title: request.title,
+    type: request.type,
+    format: request.format,
+    prompt: request.prompt,
+    createdAt: new Date().toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    }),
+    primaryColor: visualDirection.palette[0] || "#111827",
+    accentColor: visualDirection.palette[1] || "#F97316",
+    attachments: request.attachments,
+  })
+
+  const downloadGeneratedDesign = (design: GeneratedDesign) => {
+    const brandName = activeBusiness?.nome_marca || "Marketing HQ"
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1350" viewBox="0 0 1080 1350">
+        <defs>
+          <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="${design.primaryColor}" />
+            <stop offset="100%" stop-color="${design.accentColor}" />
+          </linearGradient>
+        </defs>
+        <rect width="1080" height="1350" rx="64" fill="url(#bg)" />
+        <rect x="78" y="86" width="924" height="1178" rx="48" fill="none" stroke="rgba(255,255,255,0.32)" stroke-width="3" />
+        <text x="118" y="180" fill="white" font-family="Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="10">${brandName.toUpperCase()}</text>
+        <text x="118" y="470" fill="white" font-family="Arial, sans-serif" font-size="96" font-weight="900">${design.title.toUpperCase()}</text>
+        <foreignObject x="118" y="560" width="760" height="360">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Arial, sans-serif; color: white; font-size: 46px; line-height: 1.24;">${design.prompt}</div>
+        </foreignObject>
+        <rect x="118" y="1088" width="286" height="82" rx="41" fill="white" />
+        <text x="166" y="1142" fill="${design.primaryColor}" font-family="Arial, sans-serif" font-size="28" font-weight="900">VER PROPOSTA</text>
+        <text x="710" y="1142" fill="white" font-family="Arial, sans-serif" font-size="26" font-weight="700" letter-spacing="8">${design.format.toUpperCase()}</text>
+      </svg>
+    `
+    const blob = new Blob([svg], { type: "image/svg+xml" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `${design.title.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase() || "peca"}-${design.id}.svg`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const requestVariation = (design: GeneratedDesign) => {
+    setDesignerPrompt(`Crie uma variação desta peça mantendo a mesma ideia: ${design.prompt}`)
+    setRequestType(design.type)
+    setRequestFormat(design.format)
+  }
+
+  const regenerateDesign = (design: GeneratedDesign) => {
+    const request: DesignRequest = {
+      id: `design-request-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: design.type,
+      format: design.format,
+      objective: "Nova geracao",
+      prompt: design.prompt,
+      title: design.title,
+      attachments: design.attachments,
+    }
+    setCurrentDesignRequest(request)
+    setStep("generating")
+    setTimeout(() => {
+      const generatedDesign = createGeneratedDesign(request)
+      setGeneratedDesigns(previous => [generatedDesign, ...previous])
+      setActiveGeneratedDesignId(generatedDesign.id)
+      setChatMessages(previous => [
+        ...previous,
+        {
+          id: `assistant-regenerated-${generatedDesign.id}`,
+          role: "assistant",
+          text: "Refiz a peça com uma nova variação visual.",
+        },
+      ])
+      setCurrentDesignRequest(null)
+      setStep("input")
+    }, 2600)
+  }
+
   const handleGenerate = () => {
     if (!activeBusinessId) return alert("Selecione um negócio primeiro.")
-    if (!handleAddDesignRequest()) return
+    const request = designerPrompt.trim() ? handleSendDesignerMessage() : currentDesignRequest
+    if (!request) return alert("Envie um pedido para o Designer primeiro.")
     setStep("generating")
     
-    // Simulate Opensquad AI processing
+    // Simula a criação da peça sem acionar o fluxo antigo de perfil de marca.
     setTimeout(() => {
-      setBrandProfile({
-        tom_de_voz: "Profissional, inovador e acolhedor",
-        estilo_comunicacao: "Direto ao ponto, com foco em resultados práticos.",
-        palavras_usadas: ["inovação", "crescimento", "estratégia", "tecnologia"],
-        palavras_evitar: ["barato", "gambiarra", "difícil", "complicado"],
-        publico_alvo: "Empreendedores e gestores de pequenas e médias empresas tech.",
-        proposta_valor: formData.objective || designerPrompt,
-        diferenciais: ["Identidade visual consistente", "Direção criativa com IA", "Foco em conversão"],
-        estilo_visual: serializeVisualDirection(visualDirection),
-        tipos_conteudo: ["Carrosséis educativos", "Casos de sucesso", "Vídeos curtos de dicas"],
-        exemplos_abordagem: [designerPrompt]
-      })
-      setStep("approval")
-    }, 4500)
-  }
-
-  const buildDesignerProfilePayload = () => {
-    const redesObj: Record<string, string> = {};
-    formData.socialLinks.filter(l => l.trim()).forEach((link, i) => {
-      if (link.includes('instagram')) redesObj.instagram = link;
-      else if (link.includes('linkedin')) redesObj.linkedin = link;
-      else if (link.includes('youtube')) redesObj.youtube = link;
-      else if (link.includes('tiktok')) redesObj.tiktok = link;
-      else if (link.includes('facebook')) redesObj.facebook = link;
-      else if (link.includes('twitter') || link.includes('x.com')) redesObj.twitter = link;
-      else redesObj[`rede_${i + 1}`] = link;
-    });
-
-    return {
-      business_id: activeBusinessId,
-      site_url: formData.siteUrl || null,
-      redes_sociais: redesObj,
-      tom_de_voz: brandProfile?.tom_de_voz || "Visual, direto e orientado a performance.",
-      estilo_comunicacao: brandProfile?.estilo_comunicacao || "Comunicação clara, comercial e com foco em conversão.",
-      palavras_usadas: brandProfile?.palavras_usadas || ["estrategia", "crescimento", "marca", "conteudo"],
-      palavras_evitar: brandProfile?.palavras_evitar || ["generico", "amador", "confuso"],
-      publico_alvo: brandProfile?.publico_alvo || "Publico definido pela marca.",
-      proposta_valor: formData.objective || brandProfile?.proposta_valor || designerPrompt,
-      diferenciais: brandProfile?.diferenciais || ["Identidade visual consistente", "Direção criativa com IA"],
-      estilo_visual: serializeVisualDirection(visualDirection),
-      tipos_conteudo: brandProfile?.tipos_conteudo || visualDirection.templates,
-      exemplos_abordagem: brandProfile?.exemplos_abordagem || [designerPrompt],
-    };
-  }
-
-  const handleSaveDesigner = async () => {
-    if (!activeBusinessId) return alert("Selecione uma marca primeiro.")
-    setLoading(true)
-    try {
-      const response = await fetch("/api/brand-profiles", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildDesignerProfilePayload())
-      })
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null)
-        throw new Error(data?.error || "Erro ao salvar Designer")
-      }
-
-      const savedProfile = await response.json()
-      setBrandProfile(savedProfile)
-      setIsEditingSaved(true)
-      alert("Designer salvo com sucesso.")
-    } catch (error) {
-      console.error(error)
-      alert(error instanceof Error ? error.message : "Erro ao salvar Designer")
-    } finally {
-      setLoading(false)
-    }
+      const generatedDesign = createGeneratedDesign(request)
+      setGeneratedDesigns(previous => [generatedDesign, ...previous])
+      setActiveGeneratedDesignId(generatedDesign.id)
+      setChatMessages(previous => [
+        ...previous,
+        {
+          id: `assistant-generated-${generatedDesign.id}`,
+          role: "assistant",
+          text: "Sua peça está pronta. Você pode baixar, refazer ou pedir uma variação.",
+        },
+      ])
+      setCurrentDesignRequest(null)
+      setStep("input")
+    }, 2600)
   }
 
   const handleApprove = async () => {
@@ -737,443 +781,258 @@ export default function BrandIntelligence() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+    <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="border-b border-slate-200 pb-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
               <Sparkles className="h-3.5 w-3.5 text-orange-600" />
               Designer
             </div>
-            <h2 className="mt-2 font-display text-3xl font-black tracking-tight text-slate-950 md:text-4xl">
+            <h2 className="mt-2 font-display text-3xl font-black tracking-tight text-slate-950">
               {activeBusiness ? activeBusiness.nome_marca : "Studio visual"}
             </h2>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-              Crie solicitações de peças, ajuste o brand board e acompanhe o preview em uma área limpa de trabalho.
-            </p>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
-            {["Marca", "Prompt", "Preview"].map(item => (
-              <span key={item} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
-                {item}
-              </span>
+          <select
+            className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 outline-none focus:border-orange-300 focus:ring-4 focus:ring-orange-100"
+            value={activeBusinessId}
+            onChange={(e) => selectBusinessAndCheckProfile(e.target.value, businesses)}
+          >
+            <option value="">Selecione uma marca</option>
+            {businesses.map(b => (
+              <option key={b.id} value={b.id}>{b.nome_marca}</option>
             ))}
-          </div>
+          </select>
         </div>
       </div>
 
       {step === "input" && (
-        <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)_380px]">
-          <section className="flex flex-col gap-4">
-            <Card className="order-2 overflow-hidden border-slate-200 shadow-sm">
-              <CardHeader className="border-b bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <Megaphone className="h-4 w-4 text-orange-600" />
-                  <CardTitle className="text-lg">Marca</CardTitle>
+        <div className="mx-auto max-w-4xl space-y-4">
+          <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-100 px-5 py-4">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-base font-bold text-slate-950">Criação de peças</h3>
+                  <p className="mt-1 text-sm text-slate-500">Converse com o Designer para pedir o que precisa.</p>
                 </div>
-                <CardDescription>Escolha o negocio e conecte os canais que servem de referencia.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-5">
-                <div className="space-y-2">
-                  <Label>Negocio</Label>
-                  <select
-                    className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    value={activeBusinessId}
-                    onChange={(e) => selectBusinessAndCheckProfile(e.target.value, businesses)}
-                  >
-                    <option value="">Selecione uma marca</option>
-                    {businesses.map(b => (
-                      <option key={b.id} value={b.id}>{b.nome_marca}</option>
-                    ))}
-                  </select>
-                </div>
+                <Wand2 className="h-5 w-5 text-orange-600" />
+              </div>
+            </div>
 
-                <div className="space-y-2">
-                  <Label>Site</Label>
-                  <Input
-                    placeholder="https://suaempresa.com.br"
-                    value={formData.siteUrl}
-                    onChange={e => setFormData({...formData, siteUrl: e.target.value})}
-                  />
-                </div>
-
-                <div className="space-y-3">
-                  <Label>Redes sociais</Label>
-                  {formData.socialLinks.map((link, index) => (
-                    <div key={index} className="flex gap-2">
-                      <Input
-                        placeholder="https://instagram.com/suaempresa"
-                        value={link}
-                        onChange={e => handleSocialLinkChange(index, e.target.value)}
-                      />
-                      {formData.socialLinks.length > 1 && (
-                        <Button type="button" variant="ghost" size="icon" onClick={() => removeSocialLink(index)} className="shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50">
-                          <X className="h-4 w-4" />
-                        </Button>
-                      )}
+            <div className="space-y-4 p-5">
+              <div className="rounded-3xl bg-slate-50 p-4">
+                <div className="max-h-[360px] min-h-[240px] space-y-4 overflow-y-auto pr-1">
+                  {chatMessages.map(message => (
+                    <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      <div className={`max-w-[78%] rounded-3xl px-4 py-3 text-sm leading-6 ${
+                        message.role === "user"
+                          ? "bg-slate-950 text-white"
+                          : "bg-white text-slate-700"
+                      }`}>
+                        <p>{message.text}</p>
+                        {message.attachments && message.attachments.length > 0 && (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {message.attachments.map(attachment => (
+                              <span key={attachment} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                                message.role === "user" ? "bg-white/10 text-white/75" : "bg-slate-100 text-slate-500"
+                              }`}>
+                                {attachment}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
-                  <Button type="button" variant="outline" size="sm" onClick={addSocialLink} className="text-xs">
-                    Adicionar canal
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="order-1 overflow-hidden border-slate-200 shadow-sm">
-              <CardHeader className="border-b bg-slate-50">
-                <div className="flex items-center gap-2">
-                  <ImagePlus className="h-4 w-4 text-sky-600" />
-                  <CardTitle className="text-lg">Referencias</CardTitle>
-                </div>
-                <CardDescription>Suba imagens que indiquem atmosfera, composicao e estilo.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-5">
-                <label className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center transition-colors hover:border-slate-400 hover:bg-slate-100">
-                  <Upload className="h-5 w-5 text-slate-500" />
-                  <span className="text-sm font-semibold text-slate-700">Carregar imagens</span>
-                  <span className="text-xs leading-5 text-slate-500">Logo, print do feed, campanha antiga ou moodboard.</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      handleReferenceImagesAdd(e.target.files)
-                      e.currentTarget.value = ""
-                    }}
-                  />
-                </label>
-
-                {referenceImages.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {referenceImages.map(image => (
-                      <div key={image.id} className="group relative overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
-                        <img src={image.previewUrl} alt={image.name} className="aspect-square w-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeReferenceImage(image.id)}
-                          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950/75 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                          aria-label={`Remover ${image.name}`}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </section>
-
-          <section className="space-y-4">
-            <Card className="overflow-hidden border-slate-200 shadow-sm">
-              <CardHeader className="border-b bg-white">
-                <div className="flex items-center gap-2">
-                  <Palette className="h-4 w-4 text-orange-600" />
-                  <CardTitle className="text-lg">Brand board</CardTitle>
-                </div>
-                <CardDescription>Configure o norte visual que o Designer vai seguir.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-5 pt-5">
-                <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
-                  <div className="space-y-3">
-                    <Label>Paleta</Label>
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {visualDirection.palette.map((color, index) => (
-                        <div key={`${color}-${index}`} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                          <input
-                            type="color"
-                            value={color}
-                            onChange={(e) => updatePaletteColor(index, e.target.value)}
-                            className="h-9 w-10 shrink-0 rounded border border-slate-200 bg-white p-1"
-                          />
-                          <Input
-                            value={color}
-                            onChange={(e) => updatePaletteColor(index, e.target.value)}
-                            className="h-9 bg-white"
-                            placeholder="#000000"
-                          />
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removePaletteColor(index)} className="h-9 w-9 shrink-0 text-slate-400 hover:text-red-600">
-                            <X className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={addPaletteColor}>
-                      Adicionar cor
-                    </Button>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Type className="h-4 w-4 text-slate-500" />
-                      <Label>Fontes</Label>
-                    </div>
-                    <div className="grid gap-3">
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Titulos</p>
-                        <select
-                          className="mt-2 flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm"
-                          value={visualDirection.typography.headingFont}
-                          onChange={(e) => syncFontSelection(e.target.value, "heading")}
-                        >
-                          {availableFonts.map(font => <option key={font.id} value={font.family}>{font.label}</option>)}
-                        </select>
-                      </div>
-                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Corpo</p>
-                        <select
-                          className="mt-2 flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm"
-                          value={visualDirection.typography.bodyFont}
-                          onChange={(e) => syncFontSelection(e.target.value, "body")}
-                        >
-                          {availableFonts.map(font => <option key={font.id} value={font.family}>{font.label}</option>)}
-                        </select>
-                      </div>
-                      <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50">
-                        <Upload className="h-4 w-4" />
-                        Carregar fonte
-                        <input
-                          type="file"
-                          accept=".ttf,.otf,.woff,.woff2"
-                          multiple
-                          className="hidden"
-                          onChange={(e) => {
-                            handleTypographyFilesAdd(e.target.files)
-                            e.currentTarget.value = ""
-                          }}
-                        />
-                      </label>
-                    </div>
-                  </div>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label>Composicao</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={visualDirection.compositionModel} onChange={(e) => setVisualDirection({ ...visualDirection, compositionModel: e.target.value })}>
-                      {COMPOSITION_MODEL_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Densidade</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={visualDirection.density} onChange={(e) => setVisualDirection({ ...visualDirection, density: e.target.value })}>
-                      {DENSITY_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Marca</Label>
-                    <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={visualDirection.logoPlacement} onChange={(e) => setVisualDirection({ ...visualDirection, logoPlacement: e.target.value })}>
-                      {LOGO_PLACEMENT_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="overflow-hidden border-slate-200 shadow-sm">
-              <CardHeader className="border-b bg-white">
-                <div className="flex items-center gap-2">
-                  <Wand2 className="h-4 w-4 text-violet-600" />
-                  <CardTitle className="text-lg">Solicitar peça por prompt</CardTitle>
-                </div>
-                <CardDescription>Descreva a peça que você quer receber nesta rodada.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 pt-5">
-                <div className="grid gap-3 md:grid-cols-[0.8fr_0.8fr_1fr]">
-                  <div className="space-y-2">
-                    <Label>Tipo de peça</Label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={requestType}
-                      onChange={(e) => setRequestType(e.target.value)}
-                    >
-                      {DESIGN_REQUEST_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Formato</Label>
-                    <select
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                      value={requestFormat}
-                      onChange={(e) => setRequestFormat(e.target.value)}
-                    >
-                      {DESIGN_FORMAT_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Objetivo da peça</Label>
-                    <Input
-                      placeholder="Ex: gerar leads para consultoria"
-                      value={formData.objective}
-                      onChange={e => setFormData({...formData, objective: e.target.value})}
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Prompt da peça</Label>
+                <div className="mt-4 rounded-[2rem] border border-slate-200 bg-white p-3 shadow-sm transition-all focus-within:border-orange-200 focus-within:ring-4 focus-within:ring-orange-50">
                   <textarea
-                    className="flex min-h-[156px] w-full rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="min-h-[76px] w-full resize-none bg-transparent px-3 py-2 text-base leading-7 text-slate-700 outline-none placeholder:text-slate-400"
                     value={designerPrompt}
                     onChange={(e) => setDesignerPrompt(e.target.value)}
-                    placeholder="Ex: Crie um post premium para Instagram sobre automacao comercial, com contraste alto, titulo grande, CTA claro e visual parecido com campanhas de tecnologia."
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault()
+                        handleGenerate()
+                      }
+                    }}
+                    placeholder="Digite aqui o que você deseja criar..."
                   />
-                </div>
 
-                <div className="space-y-2">
-                  <Label>Estilo visual</Label>
-                  <Input
-                    value={visualDirection.visualStyle}
-                    onChange={(e) => setVisualDirection({ ...visualDirection, visualStyle: e.target.value })}
-                  />
-                </div>
-
-                {designRequests.length > 0 && (
-                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-bold text-slate-900">Solicitações desta sessão</p>
-                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">
-                        {designRequests.length}
-                      </span>
-                    </div>
-                    <div className="grid gap-2">
-                      {designRequests.map(request => {
-                        const isActive = activeRequestId === request.id
+                  {creationAttachments.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {creationAttachments.map(attachment => {
+                        const AttachmentIcon = attachment.type === "image" ? ImageIcon : FileText
 
                         return (
-                          <button
-                            key={request.id}
-                            type="button"
-                            onClick={() => {
-                              setActiveRequestId(request.id)
-                              setRequestType(request.type)
-                              setRequestFormat(request.format)
-                              setDesignerPrompt(request.prompt)
-                              setFormData(current => ({ ...current, objective: request.objective }))
-                              setStudioPostTitle(request.title)
-                            }}
-                            className={`rounded-xl border p-3 text-left transition-colors ${
-                              isActive
-                                ? "border-orange-300 bg-orange-50"
-                                : "border-slate-200 bg-white hover:border-slate-300"
-                            }`}
-                          >
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white">
-                                {request.type}
-                              </span>
-                              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500">
-                                {request.format}
-                              </span>
-                            </div>
-                            <p className="mt-2 line-clamp-2 text-sm font-semibold text-slate-900">{request.title}</p>
-                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{request.prompt}</p>
-                          </button>
+                          <span key={attachment.id} className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-semibold text-slate-600">
+                            <AttachmentIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                            <span className="max-w-[12rem] truncate">{attachment.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => removeCreationAttachment(attachment.id)}
+                              className="rounded-full text-slate-400 hover:text-red-500"
+                              aria-label={`Remover ${attachment.name}`}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
+                          </span>
                         )
                       })}
                     </div>
+                  )}
+
+                  <div className="mt-3 flex flex-col gap-3 border-t border-slate-100 pt-3 lg:flex-row lg:items-center">
+                    <label className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-950">
+                      <Plus className="h-6 w-6" />
+                      <span className="sr-only">Anexar</span>
+                      <input
+                        type="file"
+                        accept="image/*,.pdf,.doc,.docx,.txt,.ppt,.pptx"
+                        multiple
+                        className="hidden"
+                        onChange={(e) => {
+                          handleCreationAttachmentsAdd(e.target.files)
+                          e.currentTarget.value = ""
+                        }}
+                      />
+                    </label>
+
+                    <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row">
+                      <select
+                        className="h-10 min-w-0 rounded-full border-0 bg-slate-50 px-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 sm:w-40"
+                        value={requestType}
+                        onChange={(e) => setRequestType(e.target.value)}
+                      >
+                        {DESIGN_REQUEST_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+                      </select>
+                      <select
+                        className="h-10 min-w-0 rounded-full border-0 bg-slate-50 px-3 text-sm font-semibold text-slate-600 ring-1 ring-slate-200 sm:w-36"
+                        value={requestFormat}
+                        onChange={(e) => setRequestFormat(e.target.value)}
+                      >
+                        {DESIGN_FORMAT_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </div>
+
+                    <div className="flex shrink-0 items-center justify-end gap-2">
+                      <Button onClick={handleGenerate} className="h-10 gap-2 rounded-full bg-orange-600 px-5 hover:bg-orange-700">
+                        <Sparkles className="h-4 w-4" />
+                        Gerar peças
+                      </Button>
+                    </div>
                   </div>
-                )}
-              </CardContent>
-              <CardFooter className="flex flex-col gap-3 border-t bg-slate-50 sm:flex-row sm:justify-between">
-                <Button type="button" variant="outline" onClick={handleAddDesignRequest} className="w-full sm:w-auto">
-                  Adicionar solicitação
-                </Button>
-                <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-                  <Button type="button" variant="secondary" onClick={handleSaveDesigner} disabled={loading} className="w-full sm:w-auto">
-                    {loading ? "Salvando..." : isEditingSaved ? "Salvar alterações" : "Salvar Designer"}
-                  </Button>
-                  <Button onClick={handleGenerate} className="w-full gap-2 bg-orange-600 hover:bg-orange-700 sm:w-auto">
-                    <Sparkles className="h-4 w-4" />
-                    Gerar peça
-                  </Button>
                 </div>
-              </CardFooter>
-            </Card>
+              </div>
+            </div>
           </section>
 
-          <aside className="xl:sticky xl:top-24 xl:self-start">
-            <Card className="overflow-hidden border-slate-200 shadow-xl">
-              <CardHeader className="border-b bg-slate-950 text-white">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4 text-orange-300" />
-                  <CardTitle className="text-lg">Preview do post</CardTitle>
+          {activeGeneratedDesign && (
+            <section className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-950">Peça criada</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {activeGeneratedDesign.type} · {activeGeneratedDesign.format} · {activeGeneratedDesign.createdAt}
+                  </p>
                 </div>
-                <CardDescription className="text-white/60">
-                  {activeRequest ? `${activeRequest.type} - ${activeRequest.format}` : "Amostra visual baseada no seu brand board."}
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4 bg-slate-100 p-4">
-                <div
-                  className="relative aspect-[4/5] overflow-hidden rounded-2xl p-5 text-white shadow-2xl"
-                  style={{
-                    background: `linear-gradient(145deg, ${visualDirection.palette[0] || "#111827"} 0%, ${visualDirection.palette[1] || "#F97316"} 58%, ${visualDirection.palette[2] || "#FDE047"} 100%)`,
-                  }}
-                >
-                  {referenceImages[0] && (
-                    <img src={referenceImages[0].previewUrl} alt="Referencia principal" className="absolute inset-0 h-full w-full object-cover opacity-20 mix-blend-luminosity" />
-                  )}
-                  <div className="absolute -right-14 top-10 h-36 w-36 rotate-12 rounded-[2rem] bg-white/16" />
-                  <div className="absolute -left-10 bottom-20 h-32 w-32 rounded-full bg-white/10" />
-                  <div className="relative flex h-full flex-col justify-between rounded-2xl border border-white/15 bg-slate-950/42 p-5 backdrop-blur-[2px]">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="rounded-full bg-white/14 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">
-                        {activeRequest?.type || "Designer IA"}
-                      </span>
-                      <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">
-                        {activeRequest?.format || visualDirection.logoPlacement}
-                      </span>
-                    </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" className="h-9 gap-2 rounded-full" onClick={() => requestVariation(activeGeneratedDesign)}>
+                    <Sparkles className="h-4 w-4" />
+                    Variação
+                  </Button>
+                  <Button type="button" variant="outline" className="h-9 gap-2 rounded-full" onClick={() => regenerateDesign(activeGeneratedDesign)}>
+                    <RefreshCw className="h-4 w-4" />
+                    Refazer
+                  </Button>
+                  <Button type="button" className="h-9 gap-2 rounded-full bg-slate-950 px-4 hover:bg-slate-800" onClick={() => downloadGeneratedDesign(activeGeneratedDesign)}>
+                    <Download className="h-4 w-4" />
+                    Baixar
+                  </Button>
+                </div>
+              </div>
 
-                    <div>
-                      <p className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-white/55">
-                        {activeRequest?.objective || formData.objective || "Campanha de conversao"}
-                      </p>
-                      <h3
-                        className="text-4xl font-black uppercase leading-[0.88] tracking-tight"
-                        style={{ fontFamily: buildFontStack(visualDirection.typography.headingFont, "--font-display") }}
-                      >
-                        {activeRequest?.title || studioPostTitle}
-                      </h3>
-                      <p
-                        className="mt-4 text-sm leading-6 text-white/76"
-                        style={{ fontFamily: buildFontStack(visualDirection.typography.bodyFont, "--font-body") }}
-                      >
-                        {(activeRequest?.prompt || designerPrompt).slice(0, 142)}{(activeRequest?.prompt || designerPrompt).length > 142 ? "..." : ""}
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="rounded-full bg-white px-4 py-2 text-xs font-black uppercase tracking-wide text-slate-950">
-                        Ver proposta
+              <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_240px]">
+                <div className="rounded-[24px] bg-slate-50 p-4">
+                  <div
+                    className="relative mx-auto aspect-[4/5] max-w-[420px] overflow-hidden rounded-[24px] p-8 text-white shadow-xl"
+                    style={{
+                      background: `linear-gradient(135deg, ${activeGeneratedDesign.primaryColor}, ${activeGeneratedDesign.accentColor})`,
+                    }}
+                  >
+                    <div className="absolute inset-6 rounded-[20px] border border-white/25"></div>
+                    <div className="relative flex h-full flex-col justify-between">
+                      <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.28em] text-white/75">
+                        <span>Designer IA</span>
+                        <span>{activeGeneratedDesign.format}</span>
                       </div>
-                      <div className="text-right text-[10px] font-bold uppercase tracking-[0.2em] text-white/65">
-                        Marketing HQ
+                      <div className="space-y-4">
+                        <p className="max-w-[16rem] text-xs font-semibold uppercase tracking-[0.24em] text-white/65">
+                          {activeGeneratedDesign.type}
+                        </p>
+                        <h4 className="max-w-[18rem] font-display text-4xl font-black leading-[0.95] tracking-tight">
+                          {activeGeneratedDesign.title}
+                        </h4>
+                        <p className="max-w-[19rem] text-sm leading-6 text-white/85">
+                          {activeGeneratedDesign.prompt}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="rounded-full bg-white px-4 py-2 text-xs font-black uppercase text-slate-950">Ver proposta</span>
+                        <span className="text-[10px] font-bold uppercase tracking-[0.28em] text-white/75">
+                          {activeBusiness?.nome_marca || "Marketing HQ"}
+                        </span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-4 gap-2">
-                  {visualDirection.palette.slice(0, 4).map((color, index) => (
-                    <div key={`${color}-${index}`} className="h-11 rounded-lg border border-slate-200" style={{ backgroundColor: color }} />
-                  ))}
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-bold text-slate-950">Peças criadas</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">Histórico simples das últimas gerações.</p>
+                  </div>
+                  <div className="space-y-2">
+                    {generatedDesigns.map(design => (
+                      <button
+                        key={design.id}
+                        type="button"
+                        onClick={() => setActiveGeneratedDesignId(design.id)}
+                        className={`w-full rounded-2xl border p-3 text-left transition-colors ${
+                          activeGeneratedDesign.id === design.id ? "border-orange-300 bg-orange-50" : "border-slate-200 hover:bg-slate-50"
+                        }`}
+                      >
+                        <p className="truncate text-sm font-semibold text-slate-950">{design.title}</p>
+                        <p className="mt-1 text-xs text-slate-500">{design.createdAt}</p>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
-          </aside>
+              </div>
+            </section>
+          )}
+
         </div>
       )}
 
       {step === "generating" && (
-        <Card className="border-primary/50 shadow-sm animate-pulse">
-           <CardContent className="flex flex-col items-center justify-center p-12 text-center gap-4">
-             <div className="h-12 w-12 rounded-full border-4 border-primary border-t-transparent animate-spin"></div>
+        <Card className="mx-auto max-w-4xl overflow-hidden rounded-[28px] border-orange-200 bg-white shadow-sm">
+           <CardContent className="flex min-h-[360px] flex-col items-center justify-center gap-5 p-12 text-center">
+             <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-orange-50">
+               <div className="absolute inset-0 rounded-full border-4 border-orange-100"></div>
+               <div className="absolute inset-0 rounded-full border-4 border-orange-600 border-t-transparent animate-spin"></div>
+               <Sparkles className="h-7 w-7 text-orange-600" />
+             </div>
              <div>
-               <h3 className="text-xl font-bold">O Agente está investigando...</h3>
-               <p className="text-muted-foreground mt-2 max-w-sm">Analisando o site, textos da rede social e os arquivos que você enviou para extrair seu tom de voz.</p>
+               <h3 className="font-display text-2xl font-black tracking-tight text-slate-950">Gerando sua peça...</h3>
+               <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
+                 O Designer está criando a imagem com base no seu prompt, formato escolhido e identidade visual da marca.
+               </p>
+             </div>
+             <div className="flex items-center gap-2 rounded-full bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500">
+               <span className="h-2 w-2 animate-pulse rounded-full bg-orange-600"></span>
+               Preparando preview visual
              </div>
            </CardContent>
         </Card>
@@ -1196,42 +1055,6 @@ export default function BrandIntelligence() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6 pt-6">
-              {/* Site & Social Links Section */}
-              <div className="space-y-4 p-4 rounded-lg border border-dashed border-amber-400/60 bg-amber-50/40 dark:bg-amber-900/10">
-                <div className="flex items-center gap-2 mb-1">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-600"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                  <Label className="text-sm font-semibold text-amber-700 dark:text-amber-400">Presença Online</Label>
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">URL do Site</Label>
-                  <Input 
-                    placeholder="https://suaempresa.com.br" 
-                    value={formData.siteUrl}
-                    onChange={e => setFormData({...formData, siteUrl: e.target.value})}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className="text-xs text-muted-foreground">Redes Sociais</Label>
-                  {formData.socialLinks.map((link, index) => (
-                    <div key={index} className="flex gap-2">
-                      <Input 
-                        placeholder="https://instagram.com/suaempresa" 
-                        value={link}
-                        onChange={e => handleSocialLinkChange(index, e.target.value)}
-                      />
-                      {formData.socialLinks.length > 1 && (
-                        <Button type="button" variant="ghost" size="icon" onClick={() => removeSocialLink(index)} className="shrink-0 text-red-500 hover:text-red-700 hover:bg-red-50">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" size="sm" onClick={addSocialLink} className="text-xs mt-1">
-                     + Adicionar outro canal
-                  </Button>
-                </div>
-              </div>
-
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <Label>Tom de Voz</Label>
@@ -1500,11 +1323,6 @@ export default function BrandIntelligence() {
                     <p className="text-xs text-muted-foreground">
                       Use este campo para dizer o que o Designer deve copiar do seu feed atual.
                     </p>
-                    {formData.socialLinks.some(link => link.trim()) && (
-                      <p className="text-xs text-sky-700">
-                        Links cadastrados: {formData.socialLinks.filter(link => link.trim()).join(" | ")}
-                      </p>
-                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>O que Nunca Fazer</Label>

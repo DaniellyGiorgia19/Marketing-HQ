@@ -12,6 +12,8 @@ interface Business {
   nome_marca: string;
   nome_interno: string;
   segmento: string;
+  site_url?: string;
+  redes_sociais?: Record<string, string>;
   brand_profiles?: { id: string }[];
 }
 
@@ -84,7 +86,11 @@ export default function BusinessDashboard() {
   const [formData, setFormData] = useState({
     nome_marca: "",
     nome_interno: "",
-    segmento: ""
+    segmento: "",
+    site_url: "",
+    instagram: "",
+    linkedin: "",
+    youtube: "",
   })
 
   const getApiErrorMessage = async (res: Response, fallback: string) => {
@@ -135,10 +141,24 @@ export default function BusinessDashboard() {
     setIsSubmitting(true)
     setFeedbackMessage(null)
     try {
+      const redes_sociais = {
+        instagram: formData.instagram,
+        linkedin: formData.linkedin,
+        youtube: formData.youtube,
+      }
+
       const res = await fetch("/api/businesses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          nome_marca: formData.nome_marca,
+          nome_interno: formData.nome_interno,
+          segmento: formData.segmento,
+          site_url: formData.site_url,
+          redes_sociais: Object.fromEntries(
+            Object.entries(redes_sociais).filter(([, value]) => value.trim())
+          ),
+        })
       })
       if (!res.ok) {
         const message = await getApiErrorMessage(res, "Não foi possível salvar o negócio.")
@@ -148,7 +168,7 @@ export default function BusinessDashboard() {
       }
 
       setIsOpen(false)
-      setFormData({ nome_marca: "", nome_interno: "", segmento: "" })
+      setFormData({ nome_marca: "", nome_interno: "", segmento: "", site_url: "", instagram: "", linkedin: "", youtube: "" })
       setFeedbackMessage("Negócio salvo com sucesso.")
       await fetchBusinesses()
     } catch(err) {
@@ -280,7 +300,7 @@ export default function BusinessDashboard() {
               Adicionar Negócio
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="sm:max-w-[560px]">
             <DialogHeader>
               <DialogTitle>Novo Negócio</DialogTitle>
               <DialogDescription>
@@ -321,6 +341,44 @@ export default function BusinessDashboard() {
                   placeholder="Ex: Tecnologia, Moda, SaaS..." 
                   value={formData.segmento}
                   onChange={(e) => setFormData({...formData, segmento: e.target.value})}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="site_url">Site</Label>
+                <Input
+                  id="site_url"
+                  placeholder="https://suaempresa.com.br"
+                  value={formData.site_url}
+                  onChange={(e) => setFormData({...formData, site_url: e.target.value})}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label htmlFor="instagram">Instagram</Label>
+                  <Input
+                    id="instagram"
+                    placeholder="https://instagram.com/suaempresa"
+                    value={formData.instagram}
+                    onChange={(e) => setFormData({...formData, instagram: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="linkedin">LinkedIn</Label>
+                  <Input
+                    id="linkedin"
+                    placeholder="https://linkedin.com/company/suaempresa"
+                    value={formData.linkedin}
+                    onChange={(e) => setFormData({...formData, linkedin: e.target.value})}
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="youtube">YouTube</Label>
+                <Input
+                  id="youtube"
+                  placeholder="https://youtube.com/@suaempresa"
+                  value={formData.youtube}
+                  onChange={(e) => setFormData({...formData, youtube: e.target.value})}
                 />
               </div>
               <DialogFooter>
