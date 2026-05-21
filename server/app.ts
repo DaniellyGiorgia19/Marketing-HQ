@@ -6,6 +6,8 @@ import {
   buildHtmlTemplates,
   buildReferenceTemplateFromSiteImage,
   type DesignAlignment,
+  type DesignBackground,
+  type DesignElement,
   type DesignSlide,
   type DesignerOutput,
   type LayoutVariant,
@@ -940,8 +942,7 @@ function buildPreviewCard(params: {
 }
 
 // Legacy SVG preview helper kept temporarily for fallback experiments.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function buildDesignPreviews(params: {
+export function buildDesignPreviews(params: {
   brand: BrandData;
   tema: string;
   titulo: string;
@@ -1000,11 +1001,11 @@ function buildDesignPreviews(params: {
 app.use(cors());
 app.use(express.json());
 
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', message: 'Marketing HQ API is running' });
 });
 
-app.get('/api/businesses', async (req, res) => {
+app.get('/api/businesses', async (_req, res) => {
   try {
     const businesses = await getPrisma().business.findMany({
       include: {

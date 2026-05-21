@@ -57,6 +57,15 @@ interface ReferenceImage {
   previewUrl: string;
 }
 
+interface DesignRequest {
+  id: string;
+  type: string;
+  format: string;
+  objective: string;
+  prompt: string;
+  title: string;
+}
+
 const DEFAULT_VISUAL_DIRECTION: VisualDirection = {
   palette: ["#111827", "#F97316", "#FDE047", "#FFFFFF"],
   typography: {
@@ -205,6 +214,31 @@ const DENSITY_OPTIONS = ["Clean", "Media", "Alta"] as const
 const LOGO_PLACEMENT_OPTIONS = ["Rodape", "Topo"] as const
 const FRAME_STYLE_OPTIONS = ["Sem moldura", "Moldura fina", "Tarja/Box"] as const
 
+const DESIGN_REQUEST_TYPES = [
+  "Post estatico",
+  "Carrossel",
+  "Story",
+  "Capa para video",
+  "Anuncio",
+] as const
+
+const DESIGN_FORMAT_OPTIONS = [
+  "Feed 4:5",
+  "Quadrado 1:1",
+  "Story/Reels 9:16",
+  "LinkedIn 1.91:1",
+] as const
+
+function buildRequestTitle(prompt: string, fallback: string) {
+  const words = prompt
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(word => word.length > 3)
+    .slice(0, 5)
+
+  return words.length > 0 ? words.join(" ") : fallback
+}
+
 function createUploadedFont(file: File): UploadedFont {
   const baseName = file.name.replace(/\.[^/.]+$/, "").trim() || "Fonte personalizada"
   const familyToken = baseName.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase() || "custom-font"
@@ -249,6 +283,10 @@ export default function BrandIntelligence() {
   const [designerPrompt, setDesignerPrompt] = useState(
     "Crie um post de Instagram com cara de campanha premium, usando minha paleta, minhas fontes e uma hierarquia visual forte para gerar desejo e conversao."
   )
+  const [requestType, setRequestType] = useState<string>("Post estatico")
+  const [requestFormat, setRequestFormat] = useState<string>("Feed 4:5")
+  const [designRequests, setDesignRequests] = useState<DesignRequest[]>([])
+  const [activeRequestId, setActiveRequestId] = useState("")
   const [studioPostTitle, setStudioPostTitle] = useState("Campanha que para o scroll")
   const [isTemplateMenuOpen, setIsTemplateMenuOpen] = useState(false)
   const [isEditingSaved, setIsEditingSaved] = useState(false)
@@ -259,6 +297,11 @@ export default function BrandIntelligence() {
   const activeBusiness = useMemo(
     () => businesses.find(business => business.id === activeBusinessId),
     [activeBusinessId, businesses]
+  )
+
+  const activeRequest = useMemo(
+    () => designRequests.find(request => request.id === activeRequestId) || designRequests[0],
+    [activeRequestId, designRequests]
   )
 
   const persistedFonts = useMemo(() => {
@@ -430,16 +473,26 @@ export default function BrandIntelligence() {
     })
   }
 
-  const applyPromptToPreview = () => {
-    const promptWords = designerPrompt
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
-      .split(/\s+/)
-      .filter(word => word.length > 3)
-      .slice(0, 6)
-
-    if (promptWords.length > 0) {
-      setStudioPostTitle(promptWords.join(" "))
+  const handleAddDesignRequest = () => {
+    const prompt = designerPrompt.trim()
+    if (!prompt) {
+      alert("Escreva o prompt da peça primeiro.")
+      return false
     }
+
+    const request: DesignRequest = {
+      id: `design-request-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      type: requestType,
+      format: requestFormat,
+      objective: formData.objective.trim() || "Campanha de conversao",
+      prompt,
+      title: buildRequestTitle(prompt, requestType),
+    }
+
+    setDesignRequests(previous => [request, ...previous])
+    setActiveRequestId(request.id)
+    setStudioPostTitle(request.title)
+    return true
   }
 
   const removeUploadedFont = (fontId: string) => {
@@ -570,7 +623,7 @@ export default function BrandIntelligence() {
 
   const handleGenerate = () => {
     if (!activeBusinessId) return alert("Selecione um negócio primeiro.")
-    applyPromptToPreview()
+    if (!handleAddDesignRequest()) return
     setStep("generating")
     
     // Simulate Opensquad AI processing
@@ -684,49 +737,35 @@ export default function BrandIntelligence() {
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 text-white shadow-xl">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(249,115,22,0.35),transparent_34%),radial-gradient(circle_at_80%_10%,rgba(14,165,233,0.28),transparent_30%)]" />
-        <div className="relative grid gap-8 px-6 py-8 lg:grid-cols-[1fr_360px] lg:px-8">
-          <div className="max-w-3xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.22em] text-white/70">
-              <Sparkles className="h-3.5 w-3.5" />
-              Fase 1: Designer
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">
+              <Sparkles className="h-3.5 w-3.5 text-orange-600" />
+              Designer
             </div>
-            <h2 className="mt-5 max-w-2xl font-display text-4xl font-black leading-[0.94] tracking-tight md:text-5xl">
-              Designer Studio{activeBusiness ? ` para ${activeBusiness.nome_marca}` : " visual"}.
+            <h2 className="mt-2 font-display text-3xl font-black tracking-tight text-slate-950 md:text-4xl">
+              {activeBusiness ? activeBusiness.nome_marca : "Studio visual"}
             </h2>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-white/70 md:text-base">
-              Defina paleta, fontes, imagens e comandos criativos para a IA manter um padrao visual consistente em cada post.
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Crie solicitações de peças, ajuste o brand board e acompanhe o preview em uma área limpa de trabalho.
             </p>
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/10 p-4 backdrop-blur">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-white/55">Fluxo desta fase</p>
-            <div className="mt-4 space-y-3">
-              {[
-                ["01", "Identidade", "Paleta, fontes e referencias"],
-                ["02", "Prompt", "Direcao visual em linguagem natural"],
-                ["03", "Preview", "Post gerado com padrao de marca"],
-              ].map(([index, title, text]) => (
-                <div key={index} className="flex gap-3 rounded-xl border border-white/10 bg-slate-950/35 p-3">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-xs font-black text-slate-950">
-                    {index}
-                  </span>
-                  <div>
-                    <p className="text-sm font-bold">{title}</p>
-                    <p className="text-xs text-white/58">{text}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+          <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
+            {["Marca", "Prompt", "Preview"].map(item => (
+              <span key={item} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5">
+                {item}
+              </span>
+            ))}
           </div>
         </div>
       </div>
 
       {step === "input" && (
         <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)_380px]">
-          <section className="space-y-4">
-            <Card className="overflow-hidden border-slate-200 shadow-sm">
+          <section className="flex flex-col gap-4">
+            <Card className="order-2 overflow-hidden border-slate-200 shadow-sm">
               <CardHeader className="border-b bg-slate-50">
                 <div className="flex items-center gap-2">
                   <Megaphone className="h-4 w-4 text-orange-600" />
@@ -781,7 +820,7 @@ export default function BrandIntelligence() {
               </CardContent>
             </Card>
 
-            <Card className="overflow-hidden border-slate-200 shadow-sm">
+            <Card className="order-1 overflow-hidden border-slate-200 shadow-sm">
               <CardHeader className="border-b bg-slate-50">
                 <div className="flex items-center gap-2">
                   <ImagePlus className="h-4 w-4 text-sky-600" />
@@ -937,38 +976,110 @@ export default function BrandIntelligence() {
               <CardHeader className="border-b bg-white">
                 <div className="flex items-center gap-2">
                   <Wand2 className="h-4 w-4 text-violet-600" />
-                  <CardTitle className="text-lg">Prompt do Designer</CardTitle>
+                  <CardTitle className="text-lg">Solicitar peça por prompt</CardTitle>
                 </div>
-                <CardDescription>Comande a IA como se estivesse passando briefing para um designer.</CardDescription>
+                <CardDescription>Descreva a peça que você quer receber nesta rodada.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 pt-5">
-                <textarea
-                  className="flex min-h-[132px] w-full rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  value={designerPrompt}
-                  onChange={(e) => setDesignerPrompt(e.target.value)}
-                  placeholder="Ex: Crie um post premium para Instagram sobre automacao comercial, com contraste alto, titulo grande, CTA claro e visual parecido com campanhas de tecnologia."
-                />
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-[0.8fr_0.8fr_1fr]">
                   <div className="space-y-2">
-                    <Label>Objetivo do post</Label>
+                    <Label>Tipo de peça</Label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={requestType}
+                      onChange={(e) => setRequestType(e.target.value)}
+                    >
+                      {DESIGN_REQUEST_TYPES.map(type => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Formato</Label>
+                    <select
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                      value={requestFormat}
+                      onChange={(e) => setRequestFormat(e.target.value)}
+                    >
+                      {DESIGN_FORMAT_OPTIONS.map(option => <option key={option} value={option}>{option}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Objetivo da peça</Label>
                     <Input
                       placeholder="Ex: gerar leads para consultoria"
                       value={formData.objective}
                       onChange={e => setFormData({...formData, objective: e.target.value})}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Estilo visual</Label>
-                    <Input
-                      value={visualDirection.visualStyle}
-                      onChange={(e) => setVisualDirection({ ...visualDirection, visualStyle: e.target.value })}
-                    />
-                  </div>
                 </div>
+
+                <div className="space-y-2">
+                  <Label>Prompt da peça</Label>
+                  <textarea
+                    className="flex min-h-[156px] w-full rounded-lg border border-input bg-background px-4 py-3 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    value={designerPrompt}
+                    onChange={(e) => setDesignerPrompt(e.target.value)}
+                    placeholder="Ex: Crie um post premium para Instagram sobre automacao comercial, com contraste alto, titulo grande, CTA claro e visual parecido com campanhas de tecnologia."
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Estilo visual</Label>
+                  <Input
+                    value={visualDirection.visualStyle}
+                    onChange={(e) => setVisualDirection({ ...visualDirection, visualStyle: e.target.value })}
+                  />
+                </div>
+
+                {designRequests.length > 0 && (
+                  <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-bold text-slate-900">Solicitações desta sessão</p>
+                      <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-slate-500">
+                        {designRequests.length}
+                      </span>
+                    </div>
+                    <div className="grid gap-2">
+                      {designRequests.map(request => {
+                        const isActive = activeRequestId === request.id
+
+                        return (
+                          <button
+                            key={request.id}
+                            type="button"
+                            onClick={() => {
+                              setActiveRequestId(request.id)
+                              setRequestType(request.type)
+                              setRequestFormat(request.format)
+                              setDesignerPrompt(request.prompt)
+                              setFormData(current => ({ ...current, objective: request.objective }))
+                              setStudioPostTitle(request.title)
+                            }}
+                            className={`rounded-xl border p-3 text-left transition-colors ${
+                              isActive
+                                ? "border-orange-300 bg-orange-50"
+                                : "border-slate-200 bg-white hover:border-slate-300"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded-full bg-slate-950 px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] text-white">
+                                {request.type}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-500">
+                                {request.format}
+                              </span>
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm font-semibold text-slate-900">{request.title}</p>
+                            <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{request.prompt}</p>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </CardContent>
               <CardFooter className="flex flex-col gap-3 border-t bg-slate-50 sm:flex-row sm:justify-between">
-                <Button type="button" variant="outline" onClick={applyPromptToPreview} className="w-full sm:w-auto">
-                  Atualizar preview
+                <Button type="button" variant="outline" onClick={handleAddDesignRequest} className="w-full sm:w-auto">
+                  Adicionar solicitação
                 </Button>
                 <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                   <Button type="button" variant="secondary" onClick={handleSaveDesigner} disabled={loading} className="w-full sm:w-auto">
@@ -976,7 +1087,7 @@ export default function BrandIntelligence() {
                   </Button>
                   <Button onClick={handleGenerate} className="w-full gap-2 bg-orange-600 hover:bg-orange-700 sm:w-auto">
                     <Sparkles className="h-4 w-4" />
-                    Gerar com Designer
+                    Gerar peça
                   </Button>
                 </div>
               </CardFooter>
@@ -990,7 +1101,9 @@ export default function BrandIntelligence() {
                   <Layers className="h-4 w-4 text-orange-300" />
                   <CardTitle className="text-lg">Preview do post</CardTitle>
                 </div>
-                <CardDescription className="text-white/60">Amostra visual baseada no seu brand board.</CardDescription>
+                <CardDescription className="text-white/60">
+                  {activeRequest ? `${activeRequest.type} - ${activeRequest.format}` : "Amostra visual baseada no seu brand board."}
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 bg-slate-100 p-4">
                 <div
@@ -1007,28 +1120,28 @@ export default function BrandIntelligence() {
                   <div className="relative flex h-full flex-col justify-between rounded-2xl border border-white/15 bg-slate-950/42 p-5 backdrop-blur-[2px]">
                     <div className="flex items-center justify-between gap-3">
                       <span className="rounded-full bg-white/14 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-white/80">
-                        Designer IA
+                        {activeRequest?.type || "Designer IA"}
                       </span>
                       <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/60">
-                        {visualDirection.logoPlacement}
+                        {activeRequest?.format || visualDirection.logoPlacement}
                       </span>
                     </div>
 
                     <div>
                       <p className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-white/55">
-                        {formData.objective || "Campanha de conversao"}
+                        {activeRequest?.objective || formData.objective || "Campanha de conversao"}
                       </p>
                       <h3
                         className="text-4xl font-black uppercase leading-[0.88] tracking-tight"
                         style={{ fontFamily: buildFontStack(visualDirection.typography.headingFont, "--font-display") }}
                       >
-                        {studioPostTitle}
+                        {activeRequest?.title || studioPostTitle}
                       </h3>
                       <p
                         className="mt-4 text-sm leading-6 text-white/76"
                         style={{ fontFamily: buildFontStack(visualDirection.typography.bodyFont, "--font-body") }}
                       >
-                        {designerPrompt.slice(0, 142)}{designerPrompt.length > 142 ? "..." : ""}
+                        {(activeRequest?.prompt || designerPrompt).slice(0, 142)}{(activeRequest?.prompt || designerPrompt).length > 142 ? "..." : ""}
                       </p>
                     </div>
 

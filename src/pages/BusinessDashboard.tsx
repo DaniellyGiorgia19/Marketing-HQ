@@ -27,8 +27,8 @@ const studioModules = [
     status: "Disponivel",
     accent: "bg-orange-500 text-white",
     activeRing: "ring-orange-200",
-    actionLabel: "Abrir Designer",
-    pendingLabel: "Configurar Designer",
+    actionLabel: "Criei suas peças",
+    pendingLabel: "Criei suas peças",
     cardDescription: "Configure identidade visual, referencias e comandos para posts.",
   },
   {
